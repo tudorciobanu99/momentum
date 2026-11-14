@@ -1,0 +1,15 @@
+pre-commit:
+  parallel: true
+  commands:
+    backend-format:
+      root: backend/
+      glob: "*.py"
+      run: uv run ruff format --check {staged_files}
+    backend-lint:
+      root: backend/
+      glob: "*.py"
+      run: uv run ruff check {staged_files}
+    frontend:
+      root: frontend/
+      glob: "*.{ts,tsx,js,jsx,json,css}"
+      run: pnpm exec biome check --no-errors-on-unmatched {staged_files}
