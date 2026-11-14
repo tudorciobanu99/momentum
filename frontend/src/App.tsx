@@ -6,5 +6,3 @@ export default function App() {
 		</main>
 	);
 }
-
-export const n: number = "a";

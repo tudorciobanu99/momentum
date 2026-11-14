@@ -4,5 +4,5 @@ import App from "./App";
 
 test("renders the app heading", () => {
 	render(<App />);
-	expect(screen.getByRole("heading", { name: "Momentum" })).toBeTruthy();
+	expect(screen.getByRole("heading", { name: "Nope" })).toBeTruthy();
 });
