@@ -1,3 +1,5 @@
+name: momentum
+
 services:
   db:
     image: pgvector/pgvector:0.8.2-pg17

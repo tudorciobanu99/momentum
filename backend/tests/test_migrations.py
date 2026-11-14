@@ -1,12 +1,8 @@
 """Tests for the Alembic migrations against a live Postgres."""
 
-from pathlib import Path
-
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect
-
-from app.settings import settings
 
 TABLES = {
     "articles",
@@ -22,15 +18,14 @@ TABLES = {
 }
 
 
-def test_upgrade_and_downgrade() -> None:
-    config = Config(str(Path(__file__).parent.parent / "alembic.ini"))
-    engine = create_engine(settings.database_url)
+def test_upgrade_and_downgrade(alembic_config: Config, test_database_url: str) -> None:
+    engine = create_engine(test_database_url)
 
-    command.upgrade(config, "head")
+    command.upgrade(alembic_config, "head")
     try:
         assert set(inspect(engine).get_table_names()) >= TABLES
     finally:
-        command.downgrade(config, "base")
+        command.downgrade(alembic_config, "base")
 
     assert not TABLES & set(inspect(engine).get_table_names())
     engine.dispose()
