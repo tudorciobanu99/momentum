@@ -12,7 +12,7 @@ import sys
 
 BASE = "main"
 TEMPLATE = ".github/pull_request_template.md"
-TITLE = re.compile(r"^(feat|fix|chore|docs)\([a-z][a-z-]*\): mom-\d+ \S.*$")
+TITLE = re.compile(r"^(feat|fix|chore|docs)\([a-z][a-z-]*\): \S.*$")
 PLACEHOLDERS = {"", "-", "- [ ]", "1.", "closes mom-"}
 
 
@@ -82,7 +82,7 @@ def main() -> None:
     if not title:
         reasons.append("no --title given")
     elif not TITLE.match(title) or title != title.lower():
-        reasons.append(f"title must be `type(surface): id summary`, lowercase; got `{title}`")
+        reasons.append(f"title must be `type(surface): summary`, lowercase; got `{title}`")
 
     body = option(tokens, "--body", "-b")
     body_file = option(tokens, "--body-file", "-F")
