@@ -25,22 +25,19 @@ def _test_url() -> URL:
     return url
 
 
-def _create_if_missing(url: URL) -> None:
+def _recreate(url: URL) -> None:
     admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        exists = conn.scalar(
-            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": url.database}
-        )
-        if not exists:
-            conn.execute(text(f'CREATE DATABASE "{url.database}"'))
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{url.database}"'))
     admin.dispose()
 
 
 @pytest.fixture(scope="session")
 def test_database_url() -> str:
-    """URL of the test database, created if missing. Never the dev database."""
+    """URL of the test database, dropped and recreated per session. Never the dev database."""
     url = _test_url()
-    _create_if_missing(url)
+    _recreate(url)
     return url.render_as_string(hide_password=False)
 
 

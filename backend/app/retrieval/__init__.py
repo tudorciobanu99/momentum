@@ -1,1 +1,1 @@
-"""Retrieval: embeddings of stored chunks."""
+"""Retrieval: embeddings of stored chunks and the evaluation dataset."""
