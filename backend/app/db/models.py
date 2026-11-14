@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -109,6 +110,14 @@ class FormulaCitation(Base):
 
 class Chunk(Base):
     __tablename__ = "chunks"
+    __table_args__ = (
+        Index(
+            "ix_chunks_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     article_id: Mapped[int] = mapped_column(
@@ -118,6 +127,8 @@ class Chunk(Base):
     heading_path: Mapped[str] = mapped_column(Text)
     text: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int] = mapped_column(Integer)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+    embedding_hash: Mapped[str | None] = mapped_column(Text)
 
     citations: Mapped[list[Citation]] = relationship(secondary="chunk_citations")
     formulas: Mapped[list[Formula]] = relationship(secondary="chunk_formulas")

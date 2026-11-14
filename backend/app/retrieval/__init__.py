@@ -1,1 +1,1 @@
-"""Retrieval: evaluation dataset and scoring helpers."""
+"""Retrieval: embeddings of stored chunks and the evaluation dataset."""
