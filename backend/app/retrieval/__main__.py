@@ -1,6 +1,7 @@
 """Command line entry point: `python -m app.retrieval <command>`."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -9,7 +10,9 @@ from app.db.session import SessionLocal
 from app.retrieval.client import RateLimitError, RerankError, VoyageClient, VoyageReranker
 from app.retrieval.evals import EVALS_PATH, check_database, load_questions
 from app.retrieval.hybrid import hybrid_search
+from app.retrieval.models import ProvenanceLink, RetrievedChunk
 from app.retrieval.rerank import rerank_candidates
+from app.retrieval.retrieve import retrieve
 from app.retrieval.service import embed_all
 from app.settings import settings
 
@@ -61,6 +64,56 @@ def _search(client: VoyageClient, api_key: str, query: str, rerank: bool) -> int
     return 0
 
 
+def _describe(link: ProvenanceLink) -> str:
+    if link.kind == "none":
+        return f"none -> {link.revision.title} rev {link.revision.rev_id}"
+    title = link.source.title if link.source and link.source.title else "unknown source"
+    page = f", p. {link.page}" if link.page else ""
+    return f"{link.kind}: {title}{page} ({link.revision.title} rev {link.revision.rev_id})"
+
+
+def _print_chunks(chunks: list[RetrievedChunk]) -> None:
+    for c in chunks:
+        print(
+            f"{c.chunk_id}\t{c.heading_path}\trerank={c.rerank_score:.6f}"
+            f"\tfused={c.fused_score:.6f}\tvector={c.vector_rank}\tlexical={c.lexical_rank}"
+        )
+        for f in c.formulas:
+            print(f"  formula {f.index}: {f.latex}")
+            if f.provenance:
+                print(f"    {_describe(f.provenance[0])}")
+        if c.citations:
+            print("  Sources in this chunk")
+        for cite in c.citations:
+            title = cite.source.title if cite.source and cite.source.title else "unknown source"
+            page = f", p. {cite.page}" if cite.page else ""
+            print(f"    {title}{page} ({cite.revision.title} rev {cite.revision.rev_id})")
+
+
+def _retrieve(
+    client: VoyageClient, api_key: str, query: str, top_n: int | None, as_json: bool
+) -> int:
+    try:
+        with SessionLocal() as session:
+            chunks = retrieve(
+                session, client, VoyageReranker(api_key, settings.rerank_model), query, top_n
+            )
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
+    except RateLimitError as e:
+        print(f"rate limited: {e}", file=sys.stderr)
+        return 1
+    except RerankError as e:
+        print(f"rerank failed: {e}", file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps([c.model_dump(mode="json") for c in chunks], indent=2))
+    else:
+        _print_chunks(chunks)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Runs the CLI.
 
@@ -81,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
         default=True,
         help="rerank candidates with Voyage (default), --no-rerank shows fused order",
     )
+    get = sub.add_parser("retrieve", help="print ranked chunks with formulas and provenance")
+    get.add_argument("query")
+    get.add_argument("--top-n", type=int, default=None)
+    get.add_argument("--json", action="store_true", help="print the result models as JSON")
     evals = sub.add_parser("evals", help="retrieval evaluation dataset")
     evals_sub = evals.add_subparsers(dest="action", required=True)
     validate = evals_sub.add_parser("validate", help="check the dataset against the database")
@@ -98,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.command == "search":
         return _search(client, settings.voyage_api_key, args.query, args.rerank)
+    if args.command == "retrieve":
+        return _retrieve(client, settings.voyage_api_key, args.query, args.top_n, args.json)
     try:
         report = embed_all(SessionLocal, client)
     except RateLimitError as e:
