@@ -1,4 +1,4 @@
-"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata|citations`."""
+"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata|citations|chunks`."""
 
 import argparse
 import asyncio
@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from app.db.session import SessionLocal
-from app.ingestion.service import citations_all, extract_all, fetch_all
+from app.ingestion.service import chunks_all, citations_all, extract_all, fetch_all
 from app.ingestion.titles import TITLES_PATH
 from app.ingestion.wikidata import fetch_wikidata
 
@@ -31,11 +31,21 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("formulas", help="extract formulas from stored articles")
     sub.add_parser("wikidata", help="fetch defining formulas from Wikidata")
     sub.add_parser("citations", help="extract citations and link them to formulas")
+    sub.add_parser("chunks", help="split stored articles into chunks")
     args = parser.parse_args(argv)
 
     if args.command == "formulas":
         counts = extract_all(SessionLocal)
         print(f"{sum(counts.values())} formulas from {len(counts)} articles")
+        return 0
+
+    if args.command == "chunks":
+        try:
+            counts = chunks_all(SessionLocal)
+        except LookupError as e:
+            print(e, file=sys.stderr)
+            return 1
+        print(f"{sum(counts.values())} chunks from {len(counts)} articles")
         return 0
 
     if args.command == "citations":

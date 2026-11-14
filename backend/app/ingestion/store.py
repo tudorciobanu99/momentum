@@ -7,11 +7,15 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     Article,
     ArticleHtml,
+    Chunk,
+    ChunkCitation,
+    ChunkFormula,
     Citation,
     Formula,
     FormulaCitation,
     Source,
 )
+from app.ingestion.chunks import ChunkRecord
 from app.ingestion.citations import ParsedArticle, ParsedCitation
 from app.ingestion.formulas import FormulaRecord
 
@@ -179,3 +183,61 @@ def save_citations(session: Session, article_id: int, parsed: ParsedArticle) -> 
     )
     session.flush()
     return merges
+
+
+def save_chunks(session: Session, article_id: int, records: list[ChunkRecord]) -> None:
+    """Replaces an article's chunks and their formula and citation links.
+
+    Formulas are matched by index and citations by (ref_key, page), so both must already be
+    stored for the article.
+
+    Args:
+        session: Open session; the caller owns the transaction.
+        article_id: Article the chunks belong to.
+        records: Output of `chunk_article`.
+
+    Raises:
+        LookupError: A chunk refers to a formula or citation that is not stored.
+    """
+    session.execute(delete(Chunk).where(Chunk.article_id == article_id))
+    formula_ids = {
+        index: formula_id
+        for index, formula_id in session.execute(
+            select(Formula.index, Formula.id).where(Formula.article_id == article_id)
+        )
+    }
+    citation_ids = {
+        (ref_key, page): citation_id
+        for ref_key, page, citation_id in session.execute(
+            select(Citation.ref_key, Citation.page, Citation.id).where(
+                Citation.article_id == article_id
+            )
+        )
+    }
+    wanted_formulas = {i for r in records for i in r.formula_indices}
+    wanted_citations = {k for r in records for k in r.citation_keys}
+    if not wanted_formulas <= formula_ids.keys() or not wanted_citations <= citation_ids.keys():
+        raise LookupError("formulas or citations missing")
+    chunks = [
+        Chunk(
+            article_id=article_id,
+            index=r.index,
+            heading_path=r.heading_path,
+            text=r.text,
+            token_count=r.token_count,
+        )
+        for r in records
+    ]
+    session.add_all(chunks)
+    session.flush()
+    session.add_all(
+        ChunkFormula(chunk_id=chunk.id, formula_id=formula_ids[i])
+        for chunk, r in zip(chunks, records, strict=True)
+        for i in r.formula_indices
+    )
+    session.add_all(
+        ChunkCitation(chunk_id=chunk.id, citation_id=citation_ids[key])
+        for chunk, r in zip(chunks, records, strict=True)
+        for key in r.citation_keys
+    )
+    session.flush()
