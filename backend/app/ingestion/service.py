@@ -9,11 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Article, ArticleHtml, Formula
-from app.ingestion.citations import DIRECT, parse_citations
+from app.ingestion.citations import DIRECT, INHERITED, SECTION, parse_citations
 from app.ingestion.client import WikiClient
 from app.ingestion.formulas import extract_formulas
 from app.ingestion.store import is_stored, save_article, save_citations, save_formulas
 from app.ingestion.titles import TITLES_PATH, TitleEntry, load_titles, write_titles
+
+KINDS = (DIRECT, INHERITED, SECTION, "none")
 
 
 @dataclass
@@ -38,22 +40,18 @@ class CitationsReport:
     Attributes:
         citations: Citations stored.
         with_doi: Citations with a DOI.
-        with_isbn: Citations with an ISBN and no DOI.
-        display_direct: Display formulas with at least one direct link.
-        display_inherited: Display formulas with only inherited links.
-        display_none: Display formulas without links.
-        inline_linked: Inline formulas with links.
-        section_extra: Display formulas section-level inheritance would link; not stored.
+        with_isbn: Citations with an ISBN.
+        merged_sources: Sources merged into another because DOI and ISBN matched two rows.
+        display: Display formulas by strongest link kind: direct, inherited, section, none.
+        inline: Inline formulas by strongest link kind, same keys.
     """
 
     citations: int = 0
     with_doi: int = 0
     with_isbn: int = 0
-    display_direct: int = 0
-    display_inherited: int = 0
-    display_none: int = 0
-    inline_linked: int = 0
-    section_extra: int = 0
+    merged_sources: int = 0
+    display: dict[str, int] = field(default_factory=lambda: dict.fromkeys(KINDS, 0))
+    inline: dict[str, int] = field(default_factory=lambda: dict.fromkeys(KINDS, 0))
 
 
 def revision_url(title: str, rev_id: int) -> str:
@@ -214,19 +212,12 @@ def citations_all(sessions: sessionmaker[Session]) -> CitationsReport:
                 )
             }
             parsed = parse_citations(html or "", formulas)
-            save_citations(session, article_id, parsed)
+            report.merged_sources += save_citations(session, article_id, parsed)
         report.citations += len(parsed.citations)
         report.with_doi += sum(1 for c in parsed.citations if c.doi)
         report.with_isbn += sum(1 for c in parsed.citations if c.isbn)
-        report.section_extra += parsed.section_extra
         for position, display in formulas.items():
-            links = parsed.links.get(position)
-            if not display:
-                report.inline_linked += bool(links)
-            elif not links:
-                report.display_none += 1
-            elif DIRECT in links.values():
-                report.display_direct += 1
-            else:
-                report.display_inherited += 1
+            kinds = set(parsed.links.get(position, {}).values())
+            kind = next((k for k in KINDS if k in kinds), "none")
+            (report.display if display else report.inline)[kind] += 1
     return report

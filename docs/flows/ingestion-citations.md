@@ -13,7 +13,7 @@ flowchart TD
     G --> I
     H --> I
     I --> J{DOI or ISBN?}
-    J -- yes --> K[Upsert source]
+    J -- yes --> K[Match source by DOI or ISBN, merge if two match, upsert]
     J -- no --> L[Citation without source]
     K --> M[Link formulas]
     L --> M
@@ -21,6 +21,9 @@ flowchart TD
     N -- display --> O[Direct: refs in or right after its block]
     O --> P[Inherited: refs in the paragraph before or containing it]
     N -- inline --> Q[Inherited: refs in its own paragraph]
-    P --> R[Delete article citations, insert citations and formula_citations]
-    Q --> R
+    P --> S{No link?}
+    Q --> S
+    S -- yes --> T[Section: refs anywhere in its section]
+    S -- no --> R
+    T --> R[Delete article citations, insert citations and formula_citations]
 ```

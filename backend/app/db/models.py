@@ -96,7 +96,7 @@ class Citation(Base):
 
 class FormulaCitation(Base):
     __tablename__ = "formula_citations"
-    __table_args__ = (CheckConstraint("kind IN ('direct', 'inherited')", name="kind"),)
+    __table_args__ = (CheckConstraint("kind IN ('direct', 'inherited', 'section')", name="kind"),)
 
     formula_id: Mapped[int] = mapped_column(
         ForeignKey("formulas.id", ondelete="CASCADE"), primary_key=True

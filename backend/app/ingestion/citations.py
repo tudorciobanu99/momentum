@@ -34,6 +34,7 @@ PUNCTUATION = ".,;:"
 
 DIRECT = "direct"
 INHERITED = "inherited"
+SECTION = "section"
 
 
 @dataclass(frozen=True)
@@ -67,14 +68,11 @@ class ParsedArticle:
 
     Attributes:
         citations: One per referenced note, in order of first use.
-        links: Formula position to `{ref_key: "direct" | "inherited"}`.
-        section_extra: Display formulas without links that would get some if refs anywhere in
-            their section counted. Not stored.
+        links: Formula position to `{ref_key: "direct" | "inherited" | "section"}`.
     """
 
     citations: list[ParsedCitation] = field(default_factory=list)
     links: dict[int, dict[str, str]] = field(default_factory=dict)
-    section_extra: int = 0
 
 
 def normalize_doi(value: str | None) -> str | None:
@@ -192,7 +190,7 @@ def _fields(params: dict[str, str]) -> dict[str, Any]:
         "year": int(year.group(1)) if year else None,
         "title": (_plain(title) or None) if title else None,
         "doi": doi,
-        "isbn": None if doi else isbn,
+        "isbn": isbn,
     }
 
 
@@ -205,7 +203,7 @@ def _text_fields(text: str) -> dict[str, Any]:
     return {
         "year": int(year.group(1)) if year else None,
         "doi": doi_value,
-        "isbn": None if doi_value else isbn_value,
+        "isbn": isbn_value,
     }
 
 
@@ -286,7 +284,7 @@ class _Flat:
     tokens: list[tuple[str, Any]] = field(default_factory=list)
     spans: dict[int, tuple[int, int]] = field(default_factory=dict)
     index: dict[int, int] = field(default_factory=dict)
-    section_refs: dict[int | None, set[str]] = field(default_factory=dict)
+    section_refs: dict[int | None, dict[str, None]] = field(default_factory=dict)
 
 
 def _flatten(root: LexborNode, notes: Mapping[str, LexborNode], flat: _Flat) -> None:
@@ -308,7 +306,7 @@ def _flatten(root: LexborNode, notes: Mapping[str, LexborNode], flat: _Flat) -> 
                     note_id = _note_id(child)
                     if note_id is not None and note_id in notes:
                         flat.tokens.append(("ref", note_id))
-                        flat.section_refs.setdefault(sections[-1], set()).add(note_id)
+                        flat.section_refs.setdefault(sections[-1], {})[note_id] = None
                 else:
                     start = len(flat.tokens)
                     flat.tokens.append(("enter", child))
@@ -399,8 +397,8 @@ def parse_citations(html: str, formulas: Mapping[int, bool]) -> ParsedArticle:
 
     Formula links: a display formula gets `direct` links from refs inside its block or right
     after it, and `inherited` links from the paragraph just before its block or from the
-    paragraph containing it. An inline formula inherits from its own block. Refs elsewhere in
-    the section are not inherited, only counted in `section_extra`.
+    paragraph containing it. An inline formula inherits from its own block. A formula with
+    neither gets a weaker `section` link to every ref in its section.
 
     Args:
         html: Parsoid HTML of an article.
@@ -431,22 +429,23 @@ def parse_citations(html: str, formulas: Mapping[int, bool]) -> ParsedArticle:
     }
     for position, display in formulas.items():
         node = nodes.get(position)
-        block = _enclosing(node, BLOCK_TAGS) if node is not None else None
-        if node is None or block is None or block.mem_id not in flat.spans:
+        if node is None:
             continue
+        block = _enclosing(node, BLOCK_TAGS)
         links: dict[str, str] = {}
-        if display:
-            for key in _lead_in(flat, block):
-                links[key] = INHERITED
-            for key in _direct(flat, block, flat.index[node.mem_id]):
-                links[key] = DIRECT
-        else:
-            for key in _refs_in(flat, *flat.spans[block.mem_id]):
-                links[key] = INHERITED
+        if block is not None and block.mem_id in flat.spans:
+            if display:
+                for key in _lead_in(flat, block):
+                    links[key] = INHERITED
+                for key in _direct(flat, block, flat.index[node.mem_id]):
+                    links[key] = DIRECT
+            else:
+                for key in _refs_in(flat, *flat.spans[block.mem_id]):
+                    links[key] = INHERITED
+        if not links:
+            section = _enclosing(node, {"section"})
+            for key in flat.section_refs.get(section.mem_id if section else None, {}):
+                links[key] = SECTION
         if links:
             result.links[position] = links
-        elif display:
-            section = _enclosing(node, {"section"})
-            if flat.section_refs.get(section.mem_id if section else None):
-                result.section_extra += 1
     return result

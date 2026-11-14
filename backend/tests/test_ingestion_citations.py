@@ -12,7 +12,13 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Article, Citation, Formula, FormulaCitation, Source
-from app.ingestion.citations import ParsedArticle, normalize_doi, normalize_isbn, parse_citations
+from app.ingestion.citations import (
+    ParsedArticle,
+    ParsedCitation,
+    normalize_doi,
+    normalize_isbn,
+    parse_citations,
+)
 from app.ingestion.formulas import extract_formulas
 from app.ingestion.provenance import chains_for_source
 from app.ingestion.service import citations_all
@@ -211,21 +217,31 @@ def test_direct_inherited_none_mapping() -> None:
     links = links_by_latex(SNIPPET)
     assert links["m1"] == {"cite_note-A": "inherited", "cite_note-B": "direct"}
     assert links["m2"] == {"cite_note-C": "inherited", "cite_note-A": "inherited"}
-    assert links["m3"] == {}
+    assert links["m3"] == {
+        "cite_note-A": "section",
+        "cite_note-B": "section",
+        "cite_note-C": "section",
+    }
     assert links["m4"] == {"cite_note-B": "direct"}
     assert links["m5"] == {"cite_note-C": "inherited"}
     assert links["m6"] == {"cite_note-A": "inherited"}
     assert links["m7"] == {}
 
 
-def test_section_level_inheritance_only_counted() -> None:
-    assert parse(SNIPPET).section_extra == 1
+def test_section_links_only_when_nothing_stronger() -> None:
+    links = links_by_latex(SNIPPET)
+    for latex in ("m1", "m2", "m4", "m5", "m6"):
+        assert "section" not in links[latex].values()
+    assert links["m7"] == {}
 
 
-def test_mapping_on_fixtures_has_no_direct_links_without_refs() -> None:
-    parsed = parse(load("kirchhoff_circuit_laws"))
-    assert parsed.links == {}
+def test_section_kind_on_fixtures() -> None:
+    html = load("kirchhoff_circuit_laws")
+    parsed = parse(html)
     assert len(parsed.citations) == 3
+    kinds = {k for links in parsed.links.values() for k in links.values()}
+    assert kinds == {"section"}
+    assert len(parsed.links) == 8
 
 
 def test_inline_inherits_paragraph_in_fixture() -> None:
@@ -313,10 +329,10 @@ def test_store_is_idempotent(db: sessionmaker[Session]) -> None:
     first = citations_all(db)
     stored = counts(db)
     second = citations_all(db)
-    assert counts(db) == stored == (3, 3, 7)
+    assert counts(db) == stored == (3, 3, 10)
     assert first == second
-    assert (first.display_direct, first.display_inherited, first.display_none) == (2, 2, 2)
-    assert (first.inline_linked, first.section_extra) == (1, 1)
+    assert first.display == {"direct": 2, "inherited": 2, "section": 1, "none": 1}
+    assert first.inline == {"direct": 0, "inherited": 1, "section": 0, "none": 0}
 
 
 def test_sources_deduped_across_articles(db: sessionmaker[Session]) -> None:
@@ -362,6 +378,7 @@ def test_chain_from_source_to_formula(db: sessionmaker[Session]) -> None:
         (c.source_title, c.page, c.article_title, c.rev_id, c.latex, c.kind) for c in chains
     ] == [
         ("Hydrodynamics", "42-43", "Snippet", 1, "m1", "direct"),
+        ("Hydrodynamics", "42-43", "Snippet", 1, "m3", "section"),
         ("Hydrodynamics", "42-43", "Snippet", 1, "m4", "direct"),
     ]
     assert chains[0].url == "https://example.org/Snippet"
@@ -376,3 +393,49 @@ def test_citations_replaced_per_article(db: sessionmaker[Session]) -> None:
     assert counts(db)[1] == 3
     with db() as s:
         assert s.scalar(select(func.count(Formula.id))) == 7
+
+
+def cite(ref_key: str, doi: str | None, isbn: str | None, title: str = "T") -> ParsedCitation:
+    return ParsedCitation(ref_key, None, {}, title=title, doi=doi, isbn=isbn)
+
+
+def store(sessions: sessionmaker[Session], article_id: int, *citations: ParsedCitation) -> int:
+    with sessions.begin() as s:
+        return save_citations(s, article_id, ParsedArticle(list(citations)))
+
+
+def test_source_keeps_both_identifiers(db: sessionmaker[Session]) -> None:
+    article_id = add_article(db, "A", SNIPPET)
+    store(db, article_id, cite("k1", "10.1/x", "9780306406157"))
+    with db() as s:
+        source = s.scalars(select(Source)).one()
+    assert (source.doi, source.isbn) == ("10.1/x", "9780306406157")
+
+
+def test_source_matches_by_doi_or_isbn(db: sessionmaker[Session]) -> None:
+    first = add_article(db, "A", SNIPPET)
+    second = add_article(db, "B", SNIPPET)
+    store(db, first, cite("k1", "10.1/x", None))
+    store(db, second, cite("k1", "10.1/x", "9780306406157"))
+    third = add_article(db, "C", SNIPPET)
+    store(db, third, cite("k1", None, "9780306406157"))
+    with db() as s:
+        source = s.scalars(select(Source)).one()
+        assert (source.doi, source.isbn) == ("10.1/x", "9780306406157")
+        assert s.scalar(select(func.count(Citation.id)).where(Citation.source_id == source.id)) == 3
+
+
+def test_sources_merged_when_doi_and_isbn_match_different_rows(
+    db: sessionmaker[Session],
+) -> None:
+    first = add_article(db, "A", SNIPPET)
+    second = add_article(db, "B", SNIPPET)
+    third = add_article(db, "C", SNIPPET)
+    store(db, first, cite("k1", "10.1/x", None, "By doi"))
+    store(db, second, cite("k1", None, "9780306406157", "By isbn"))
+    assert store(db, third, cite("k1", "10.1/x", "9780306406157")) == 1
+    with db() as s:
+        source = s.scalars(select(Source)).one()
+        assert (source.title, source.doi, source.isbn) == ("By doi", "10.1/x", "9780306406157")
+        assert set(s.scalars(select(Citation.source_id)).all()) == {source.id}
+        assert s.scalar(select(func.count(Citation.id))) == 3

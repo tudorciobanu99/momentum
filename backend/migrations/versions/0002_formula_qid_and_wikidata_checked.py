@@ -17,6 +17,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.drop_constraint(op.f("ck_formula_citations_kind"), "formula_citations", type_="check")
+    op.create_check_constraint(
+        op.f("ck_formula_citations_kind"),
+        "formula_citations",
+        "kind IN ('direct', 'inherited', 'section')",
+    )
     op.add_column("formulas", sa.Column("wikidata_qid", sa.Text(), nullable=True))
     op.create_index(op.f("ix_formulas_wikidata_qid"), "formulas", ["wikidata_qid"], unique=False)
     op.add_column(
@@ -25,6 +31,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DELETE FROM formula_citations WHERE kind = 'section'")
+    op.drop_constraint(op.f("ck_formula_citations_kind"), "formula_citations", type_="check")
+    op.create_check_constraint(
+        op.f("ck_formula_citations_kind"), "formula_citations", "kind IN ('direct', 'inherited')"
+    )
     op.drop_column("articles", "wikidata_checked_at")
     op.drop_index(op.f("ix_formulas_wikidata_qid"), table_name="formulas")
     op.drop_column("formulas", "wikidata_qid")

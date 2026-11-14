@@ -1,6 +1,6 @@
 """Writing fetched articles to the database."""
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -103,49 +103,64 @@ def save_formulas(session: Session, article_id: int, records: list[FormulaRecord
     session.flush()
 
 
-def _upsert_source(session: Session, c: ParsedCitation) -> int | None:
-    if c.doi:
-        key, where = "doi", "doi IS NOT NULL"
-    elif c.isbn:
-        key, where = "isbn", "isbn IS NOT NULL"
+def _upsert_source(session: Session, c: ParsedCitation) -> tuple[int | None, bool]:
+    if not (c.doi or c.isbn):
+        return None, False
+    by_doi = session.scalar(select(Source).where(Source.doi == c.doi)) if c.doi else None
+    by_isbn = session.scalar(select(Source).where(Source.isbn == c.isbn)) if c.isbn else None
+    merged = False
+    if by_doi and by_isbn and by_doi.id != by_isbn.id:
+        session.execute(
+            update(Citation).where(Citation.source_id == by_isbn.id).values(source_id=by_doi.id)
+        )
+        for name in ("authors", "year", "title"):
+            if getattr(by_doi, name) is None:
+                setattr(by_doi, name, getattr(by_isbn, name))
+        session.delete(by_isbn)
+        session.flush()
+        merged = True
+    source = by_doi or by_isbn
+    if source is None:
+        source = Source(authors=c.authors, year=c.year, title=c.title, doi=c.doi, isbn=c.isbn)
+        session.add(source)
     else:
-        return None
-    stmt = insert(Source).values(
-        authors=c.authors, year=c.year, title=c.title, doi=c.doi, isbn=c.isbn
-    )
-    excluded = stmt.excluded
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[key],
-        index_where=text(where),
-        set_={
-            "authors": func.coalesce(Source.authors, excluded.authors),
-            "year": func.coalesce(Source.year, excluded.year),
-            "title": func.coalesce(Source.title, excluded.title),
-        },
-    ).returning(Source.id)
-    return session.execute(stmt).scalar_one()
+        source.authors = source.authors or c.authors
+        source.year = source.year or c.year
+        source.title = source.title or c.title
+        source.doi = source.doi or c.doi
+        source.isbn = source.isbn or c.isbn
+    session.flush()
+    return source.id, merged
 
 
-def save_citations(session: Session, article_id: int, parsed: ParsedArticle) -> None:
+def save_citations(session: Session, article_id: int, parsed: ParsedArticle) -> int:
     """Replaces an article's citations and formula links; sources are upserted, never deleted.
 
-    Sources are deduplicated by DOI, else by ISBN. A citation with neither has no source.
+    A citation matches an existing source by DOI or ISBN and fills its missing fields. If its
+    DOI and ISBN match different sources they are merged into the DOI one. A citation with
+    neither has no source.
     Formulas are matched to links by position, so the article's formulas must be stored first.
 
     Args:
         session: Open session; the caller owns the transaction.
         article_id: Article the citations belong to.
         parsed: Output of `parse_citations`.
+
+    Returns:
+        Number of sources merged into another.
     """
     session.execute(delete(Citation).where(Citation.article_id == article_id))
     by_key: dict[str, Citation] = {}
+    merges = 0
     for c in parsed.citations:
+        source_id, merged = _upsert_source(session, c)
+        merges += merged
         citation = Citation(
             article_id=article_id,
             ref_key=c.ref_key,
             page=c.page,
             raw={**c.raw, "authors": c.authors, "year": c.year, "title": c.title},
-            source_id=_upsert_source(session, c),
+            source_id=source_id,
         )
         by_key[c.ref_key] = citation
         session.add(citation)
@@ -163,3 +178,4 @@ def save_citations(session: Session, article_id: int, parsed: ParsedArticle) -> 
         for key, kind in links.items()
     )
     session.flush()
+    return merges

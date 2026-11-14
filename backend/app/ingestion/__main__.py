@@ -11,6 +11,10 @@ from app.ingestion.titles import TITLES_PATH
 from app.ingestion.wikidata import fetch_wikidata
 
 
+def _kinds(counts: dict[str, int]) -> str:
+    return ", ".join(f"{k} {v}" for k, v in counts.items())
+
+
 def main(argv: list[str] | None = None) -> int:
     """Runs the CLI.
 
@@ -36,13 +40,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "citations":
         c = citations_all(SessionLocal)
-        display = c.display_direct + c.display_inherited + c.display_none
         print(
-            f"{c.citations} citations ({c.with_doi} doi, {c.with_isbn} isbn); "
-            f"display formulas {display}: direct {c.display_direct}, "
-            f"inherited {c.display_inherited}, none {c.display_none}; "
-            f"inline linked {c.inline_linked}; "
-            f"section-level inheritance would add {c.section_extra}"
+            f"{c.citations} citations ({c.with_doi} doi, {c.with_isbn} isbn), "
+            f"{c.merged_sources} sources merged; "
+            f"display formulas {sum(c.display.values())}: {_kinds(c.display)}; "
+            f"inline formulas {sum(c.inline.values())}: {_kinds(c.inline)}"
         )
         return 0
 
