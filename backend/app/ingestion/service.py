@@ -5,10 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.db.models import Article, ArticleHtml
 from app.ingestion.client import WikiClient
-from app.ingestion.store import is_stored, save_article
+from app.ingestion.formulas import extract_formulas
+from app.ingestion.store import is_stored, save_article, save_formulas
 from app.ingestion.titles import TITLES_PATH, TitleEntry, load_titles, write_titles
 
 
@@ -132,3 +135,26 @@ async def fetch_all(
         await asyncio.gather(*(_fetch_one(c, sessions, e, report) for e in entries))
     write_titles(entries, titles_path)
     return report
+
+
+def extract_all(sessions: sessionmaker[Session]) -> dict[str, int]:
+    """Extracts and stores formulas for every stored article, replacing earlier results.
+
+    Args:
+        sessions: Session factory for the target database.
+
+    Returns:
+        Title to number of formulas stored.
+    """
+    counts: dict[str, int] = {}
+    with sessions() as session:
+        rows = session.execute(select(Article.id, Article.title).order_by(Article.id)).all()
+    for article_id, title in rows:
+        with sessions.begin() as session:
+            html = session.scalar(
+                select(ArticleHtml.html).where(ArticleHtml.article_id == article_id)
+            )
+            records = extract_formulas(html or "")
+            save_formulas(session, article_id, records)
+        counts[title] = len(records)
+    return counts

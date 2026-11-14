@@ -1,10 +1,11 @@
 """Writing fetched articles to the database."""
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.db.models import Article, ArticleHtml
+from app.db.models import Article, ArticleHtml, Formula
+from app.ingestion.formulas import FormulaRecord
 
 LICENSE = "CC BY-SA 4.0"
 
@@ -68,3 +69,26 @@ def is_stored(session: Session, title: str, rev_id: int) -> bool:
         session.scalar(select(Article.id).where(Article.title == title, Article.rev_id == rev_id))
         is not None
     )
+
+
+def save_formulas(session: Session, article_id: int, records: list[FormulaRecord]) -> None:
+    """Replaces an article's formulas with the given records.
+
+    Args:
+        session: Open session; the caller owns the transaction.
+        article_id: Article the formulas belong to.
+        records: Extracted formulas.
+    """
+    session.execute(delete(Formula).where(Formula.article_id == article_id))
+    session.add_all(
+        Formula(
+            article_id=article_id,
+            index=r.index,
+            latex=r.latex,
+            display=r.display,
+            section_path=r.section_path,
+            position=r.position,
+        )
+        for r in records
+    )
+    session.flush()
