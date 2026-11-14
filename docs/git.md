@@ -47,3 +47,10 @@ Body: [.github/pull_request_template.md](../.github/pull_request_template.md)
 
 - Squash merge only
 - Delete the branch after merging
+
+## Hooks
+
+```sh
+brew install lefthook
+lefthook install
+```
