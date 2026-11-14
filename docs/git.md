@@ -19,7 +19,7 @@ Format: `type/id-slug`, for example `feat/mom-12-planner-node`
 
 ## Commits
 
-Format: `type(surface): id summary`, for example `feat(frontend): mom-12 add planner node`
+Format: `type(surface): summary`, for example `feat(frontend): add planner node`
 
 | Surface | Covers |
 |---|---|

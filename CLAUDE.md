@@ -9,6 +9,7 @@ A multi-agent physics companion that takes you from an idea to understanding, th
 | [docs/workflow.md](docs/workflow.md) | Starting any work |
 | [docs/tech-stack.md](docs/tech-stack.md) | Adding a dependency or choosing a tool |
 | [docs/git.md](docs/git.md) | Creating a branch, commit or pull request |
+| [docs/conventions.md](docs/conventions.md) | Writing code or comments |
 
 ## Communication
 
