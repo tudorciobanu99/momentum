@@ -20,6 +20,8 @@ class Settings(BaseSettings):
         lexical_top_k: Lexical results fused.
         rrf_k: Reciprocal rank fusion constant.
         candidate_limit: Candidates returned by hybrid search.
+        rerank_model: Voyage rerank model.
+        rerank_top_n: Candidates kept after reranking.
     """
 
     model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
@@ -33,6 +35,8 @@ class Settings(BaseSettings):
     lexical_top_k: int = 50
     rrf_k: int = 60
     candidate_limit: int = 30
+    rerank_model: str = "rerank-3-lite"
+    rerank_top_n: int = 10
 
 
 settings = Settings()

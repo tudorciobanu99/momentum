@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 
 _SEARCH = text(
     """
-    WITH q AS (SELECT websearch_to_tsquery('english', :q) AS query)
+    WITH q AS (
+        SELECT replace(plainto_tsquery('english', :q)::text, ' & ', ' | ')::tsquery AS query
+    )
     SELECT c.id, ts_rank_cd(c.search_vector, q.query) AS rank
     FROM chunks c, q
     WHERE c.search_vector @@ q.query
@@ -18,7 +20,9 @@ _SEARCH = text(
 def lexical_search(session: Session, query: str, limit: int) -> list[tuple[int, float]]:
     """Ranks chunks against a free-text query.
 
-    Uses `websearch_to_tsquery`, which never raises on punctuation or LaTeX characters.
+    Matches chunks containing any query term: the lexemes of `plainto_tsquery`, which never raises
+    on punctuation or LaTeX characters, are joined with OR. `ts_rank_cd` ranks chunks matching more
+    terms higher.
 
     Args:
         session: Open database session.
