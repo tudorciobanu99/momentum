@@ -1,0 +1,13 @@
+title:
+epic:
+story:
+  as:
+  want:
+  so_that:
+design:
+acceptance_criteria:
+  - given:
+    when:
+    then:
+out_of_scope: []
+depends_on: []
