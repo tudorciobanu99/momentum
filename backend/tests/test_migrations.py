@@ -12,9 +12,12 @@ TABLES = {
     "articles",
     "article_html",
     "formulas",
-    "references",
-    "provenance_links",
+    "sources",
+    "citations",
+    "formula_citations",
     "chunks",
+    "chunk_citations",
+    "chunk_formulas",
     "wikidata_formulas",
 }
 

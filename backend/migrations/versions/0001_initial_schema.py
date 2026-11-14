@@ -51,8 +51,6 @@ def upgrade() -> None:
         sa.Column("heading_path", sa.Text(), nullable=False),
         sa.Column("text", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False),
-        sa.Column("formula_ids", sa.ARRAY(sa.Integer()), nullable=False),
-        sa.Column("reference_ids", sa.ARRAY(sa.Integer()), nullable=False),
         sa.ForeignKeyConstraint(["article_id"], ["articles.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -71,22 +69,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_formulas_article_id"), "formulas", ["article_id"], unique=False)
     op.create_table(
-        "references",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("article_id", sa.Integer(), nullable=False),
-        sa.Column("ref_key", sa.Text(), nullable=False),
-        sa.Column("authors", sa.Text(), nullable=True),
-        sa.Column("year", sa.Integer(), nullable=True),
-        sa.Column("title", sa.Text(), nullable=True),
-        sa.Column("doi", sa.Text(), nullable=True),
-        sa.Column("isbn", sa.Text(), nullable=True),
-        sa.Column("page", sa.Text(), nullable=True),
-        sa.Column("raw", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.ForeignKeyConstraint(["article_id"], ["articles.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_references_article_id"), "references", ["article_id"], unique=False)
-    op.create_table(
         "wikidata_formulas",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("article_id", sa.Integer(), nullable=False),
@@ -102,36 +84,90 @@ def upgrade() -> None:
         op.f("ix_wikidata_formulas_article_id"), "wikidata_formulas", ["article_id"], unique=False
     )
     op.create_table(
-        "provenance_links",
+        "sources",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("target_type", sa.Text(), nullable=False),
-        sa.Column("target_id", sa.Integer(), nullable=False),
-        sa.Column("reference_id", sa.Integer(), nullable=True),
-        sa.Column("article_id", sa.Integer(), nullable=False),
-        sa.Column("kind", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(["article_id"], ["articles.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["reference_id"], ["references.id"], ondelete="SET NULL"),
+        sa.Column("authors", sa.Text(), nullable=True),
+        sa.Column("year", sa.Integer(), nullable=True),
+        sa.Column("title", sa.Text(), nullable=True),
+        sa.Column("doi", sa.Text(), nullable=True),
+        sa.Column("isbn", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        op.f("ix_provenance_links_article_id"), "provenance_links", ["article_id"], unique=False
+        "uq_sources_doi",
+        "sources",
+        ["doi"],
+        unique=True,
+        postgresql_where=sa.text("doi IS NOT NULL"),
     )
     op.create_index(
-        op.f("ix_provenance_links_reference_id"), "provenance_links", ["reference_id"], unique=False
+        "uq_sources_isbn",
+        "sources",
+        ["isbn"],
+        unique=True,
+        postgresql_where=sa.text("isbn IS NOT NULL"),
+    )
+    op.create_table(
+        "citations",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("article_id", sa.Integer(), nullable=False),
+        sa.Column("ref_key", sa.Text(), nullable=False),
+        sa.Column("page", sa.Text(), nullable=True),
+        sa.Column("raw", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("source_id", sa.Integer(), nullable=True),
+        sa.ForeignKeyConstraint(["article_id"], ["articles.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["source_id"], ["sources.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("article_id", "ref_key", "page", postgresql_nulls_not_distinct=True),
+    )
+    op.create_index(op.f("ix_citations_source_id"), "citations", ["source_id"], unique=False)
+    op.create_table(
+        "formula_citations",
+        sa.Column("formula_id", sa.Integer(), nullable=False),
+        sa.Column("citation_id", sa.Integer(), nullable=False),
+        sa.Column("kind", sa.Text(), nullable=False),
+        sa.CheckConstraint(
+            "kind IN ('direct', 'inherited')", name=op.f("ck_formula_citations_kind")
+        ),
+        sa.ForeignKeyConstraint(["formula_id"], ["formulas.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["citation_id"], ["citations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("formula_id", "citation_id"),
+    )
+    op.create_index(
+        op.f("ix_formula_citations_citation_id"), "formula_citations", ["citation_id"], unique=False
+    )
+    op.create_table(
+        "chunk_citations",
+        sa.Column("chunk_id", sa.Integer(), nullable=False),
+        sa.Column("citation_id", sa.Integer(), nullable=False),
+        sa.ForeignKeyConstraint(["chunk_id"], ["chunks.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["citation_id"], ["citations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("chunk_id", "citation_id"),
+    )
+    op.create_index(
+        op.f("ix_chunk_citations_citation_id"), "chunk_citations", ["citation_id"], unique=False
+    )
+    op.create_table(
+        "chunk_formulas",
+        sa.Column("chunk_id", sa.Integer(), nullable=False),
+        sa.Column("formula_id", sa.Integer(), nullable=False),
+        sa.ForeignKeyConstraint(["chunk_id"], ["chunks.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["formula_id"], ["formulas.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("chunk_id", "formula_id"),
+    )
+    op.create_index(
+        op.f("ix_chunk_formulas_formula_id"), "chunk_formulas", ["formula_id"], unique=False
     )
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_provenance_links_reference_id"), table_name="provenance_links")
-    op.drop_index(op.f("ix_provenance_links_article_id"), table_name="provenance_links")
-    op.drop_table("provenance_links")
-    op.drop_index(op.f("ix_wikidata_formulas_article_id"), table_name="wikidata_formulas")
+    op.drop_table("chunk_formulas")
+    op.drop_table("chunk_citations")
+    op.drop_table("formula_citations")
+    op.drop_table("citations")
+    op.drop_table("sources")
     op.drop_table("wikidata_formulas")
-    op.drop_index(op.f("ix_references_article_id"), table_name="references")
-    op.drop_table("references")
-    op.drop_index(op.f("ix_formulas_article_id"), table_name="formulas")
     op.drop_table("formulas")
-    op.drop_index(op.f("ix_chunks_article_id"), table_name="chunks")
     op.drop_table("chunks")
     op.drop_table("article_html")
     op.drop_table("articles")

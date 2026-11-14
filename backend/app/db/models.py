@@ -3,9 +3,19 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -49,34 +59,48 @@ class Formula(Base):
     position: Mapped[int] = mapped_column(Integer)
 
 
-class Reference(Base):
-    __tablename__ = "references"
+class Source(Base):
+    __tablename__ = "sources"
+    __table_args__ = (
+        Index("uq_sources_doi", "doi", unique=True, postgresql_where=text("doi IS NOT NULL")),
+        Index("uq_sources_isbn", "isbn", unique=True, postgresql_where=text("isbn IS NOT NULL")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    article_id: Mapped[int] = mapped_column(
-        ForeignKey("articles.id", ondelete="CASCADE"), index=True
-    )
-    ref_key: Mapped[str] = mapped_column(Text)
     authors: Mapped[str | None] = mapped_column(Text)
     year: Mapped[int | None] = mapped_column(Integer)
     title: Mapped[str | None] = mapped_column(Text)
     doi: Mapped[str | None] = mapped_column(Text)
     isbn: Mapped[str | None] = mapped_column(Text)
-    page: Mapped[str | None] = mapped_column(Text)
-    raw: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
-class ProvenanceLink(Base):
-    __tablename__ = "provenance_links"
+class Citation(Base):
+    __tablename__ = "citations"
+    __table_args__ = (
+        UniqueConstraint("article_id", "ref_key", "page", postgresql_nulls_not_distinct=True),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    target_type: Mapped[str] = mapped_column(Text)
-    target_id: Mapped[int] = mapped_column(Integer)
-    reference_id: Mapped[int | None] = mapped_column(
-        ForeignKey("references.id", ondelete="SET NULL"), index=True
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"))
+    ref_key: Mapped[str] = mapped_column(Text)
+    page: Mapped[str | None] = mapped_column(Text)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), index=True
     )
-    article_id: Mapped[int] = mapped_column(
-        ForeignKey("articles.id", ondelete="CASCADE"), index=True
+
+    source: Mapped[Source | None] = relationship()
+
+
+class FormulaCitation(Base):
+    __tablename__ = "formula_citations"
+    __table_args__ = (CheckConstraint("kind IN ('direct', 'inherited')", name="kind"),)
+
+    formula_id: Mapped[int] = mapped_column(
+        ForeignKey("formulas.id", ondelete="CASCADE"), primary_key=True
+    )
+    citation_id: Mapped[int] = mapped_column(
+        ForeignKey("citations.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     kind: Mapped[str] = mapped_column(Text)
 
@@ -92,8 +116,31 @@ class Chunk(Base):
     heading_path: Mapped[str] = mapped_column(Text)
     text: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int] = mapped_column(Integer)
-    formula_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer))
-    reference_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer))
+
+    citations: Mapped[list[Citation]] = relationship(secondary="chunk_citations")
+    formulas: Mapped[list[Formula]] = relationship(secondary="chunk_formulas")
+
+
+class ChunkCitation(Base):
+    __tablename__ = "chunk_citations"
+
+    chunk_id: Mapped[int] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    citation_id: Mapped[int] = mapped_column(
+        ForeignKey("citations.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+class ChunkFormula(Base):
+    __tablename__ = "chunk_formulas"
+
+    chunk_id: Mapped[int] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    formula_id: Mapped[int] = mapped_column(
+        ForeignKey("formulas.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
 
 
 class WikidataFormula(Base):
