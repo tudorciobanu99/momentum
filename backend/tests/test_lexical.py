@@ -97,3 +97,14 @@ def test_no_match_is_empty(chunks: sessionmaker[Session]) -> None:
 @pytest.mark.parametrize("query", ["", "   ", "the and of"])
 def test_blank_or_stop_word_query_is_empty(chunks: sessionmaker[Session], query: str) -> None:
     assert headings(chunks, query) == []
+
+
+def test_natural_question_matches_chunks_with_a_subset_of_terms(
+    chunks: sessionmaker[Session],
+) -> None:
+    result = headings(chunks, "how does a damped oscillator lose energy")
+    assert sorted(result) == sorted([FIXTURES[0][0], FIXTURES[1][0]])
+
+
+def test_more_matching_terms_rank_higher(chunks: sessionmaker[Session]) -> None:
+    assert headings(chunks, "kinetic potential energy") == [FIXTURES[0][0], FIXTURES[1][0]]
