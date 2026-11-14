@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-app = FastAPI( title = "Momentum" )
+app = FastAPI(title="Momentum")
 
 
 @app.get("/api/health")
@@ -12,4 +12,4 @@ def health() -> dict[str, str]:
     Returns:
         A payload with status "ok".
     """
-    return {"status": "ok"}
+    return {"status": 1}
