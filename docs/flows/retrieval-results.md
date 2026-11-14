@@ -12,6 +12,6 @@ flowchart TD
     G -- no --> I[One none link ending at the article revision]
     H --> J[Attach Wikidata record by QID, lowest id]
     I --> J
-    J --> K[Chunk citations as direct links]
+    J --> K[Chunk citations as sources without a kind]
     K --> L[Return RetrievedChunk list in rerank order]
 ```

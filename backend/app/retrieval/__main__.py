@@ -82,8 +82,12 @@ def _print_chunks(chunks: list[RetrievedChunk]) -> None:
             print(f"  formula {f.index}: {f.latex}")
             if f.provenance:
                 print(f"    {_describe(f.provenance[0])}")
-        for link in c.citations:
-            print(f"  source {_describe(link)}")
+        if c.citations:
+            print("  Sources in this chunk")
+        for cite in c.citations:
+            title = cite.source.title if cite.source and cite.source.title else "unknown source"
+            page = f", p. {cite.page}" if cite.page else ""
+            print(f"    {title}{page} ({cite.revision.title} rev {cite.revision.rev_id})")
 
 
 def _retrieve(

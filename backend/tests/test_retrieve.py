@@ -1,5 +1,6 @@
 """Tests for retrieval results with formulas and provenance."""
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -7,6 +8,7 @@ from sqlalchemy import delete, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import models as db
+from app.retrieval.__main__ import main
 from app.retrieval.client import FakeClient, FakeReranker
 from app.retrieval.models import RetrievedChunk
 from app.retrieval.retrieve import retrieve
@@ -164,7 +166,8 @@ def test_chunk_citations(sessions: sessionmaker[Session]) -> None:
             session.add(db.ChunkCitation(chunk_id=chunk.id, citation_id=c.id))
     [result] = run(sessions)
     assert [c.source.title for c in result.citations if c.source] == ["Book A", "Book B"]
-    assert all(c.kind == "direct" and c.page == "4" for c in result.citations)
+    assert all(c.page == "4" for c in result.citations)
+    assert not any(hasattr(c, "kind") for c in result.citations)
     assert result.citations[0].revision.title == "Energy"
     assert result.formulas == []
 
@@ -273,3 +276,27 @@ def test_end_to_end_orders_by_rerank_score_with_typed_models(
 
 def test_no_results_returns_empty(sessions: sessionmaker[Session]) -> None:
     assert run(sessions) == []
+
+
+def test_cli_retrieve_json(
+    sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with sessions.begin() as session:
+        article = seed_article(session)
+        chunk = seed_chunk(session, article, 0, "energy")
+        seed_formula(session, article, chunk, 1)
+        c = seed_citation(session, article, "c", "Book", "2")
+        session.add(db.ChunkCitation(chunk_id=chunk.id, citation_id=c.id))
+    monkeypatch.setattr(settings, "voyage_api_key", "key")
+    monkeypatch.setattr("app.retrieval.__main__.SessionLocal", sessions)
+    monkeypatch.setattr(
+        "app.retrieval.__main__.VoyageClient", lambda *_: FakeClient(DIM, vector=lambda _: vec(1.0))
+    )
+    monkeypatch.setattr("app.retrieval.__main__.VoyageReranker", lambda *_: FakeReranker())
+    assert main(["retrieve", "energy", "--top-n", "3", "--json"]) == 0
+    [out] = json.loads(capsys.readouterr().out)
+    assert out["formulas"][0]["provenance"][0]["kind"] == "none"
+    assert out["citations"][0]["source"]["title"] == "Book"
+    assert "kind" not in out["citations"][0]

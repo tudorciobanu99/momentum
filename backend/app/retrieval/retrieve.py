@@ -10,6 +10,7 @@ from app.retrieval.client import EmbeddingClient, Reranker
 from app.retrieval.hybrid import hybrid_search
 from app.retrieval.models import (
     ArticleRevision,
+    ChunkCitation,
     FormulaHit,
     ProvenanceLink,
     RetrievedChunk,
@@ -40,6 +41,18 @@ def _link(
     )
 
 
+def _source_ref(source: db.Source | None) -> SourceRef | None:
+    if source is None:
+        return None
+    return SourceRef(
+        title=source.title,
+        authors=source.authors,
+        year=source.year,
+        doi=source.doi,
+        isbn=source.isbn,
+    )
+
+
 def _sort_key(link: ProvenanceLink) -> tuple[int, bool, str, bool, str]:
     title = link.source.title if link.source else None
     return (_KIND_ORDER[link.kind], title is None, title or "", link.page is None, link.page or "")
@@ -56,8 +69,8 @@ def retrieve(
 
     Runs hybrid search and reranking, then loads everything in a constant number of queries.
     A formula without citations gets one `none` link, so its chain ends at the article revision.
-    Chunk citations are reported as `direct` links. When several Wikidata records share a QID,
-    the one with the lowest id is attached.
+    Chunk citations are reported separately, without a kind. When several Wikidata records share
+    a QID, the one with the lowest id is attached.
 
     Args:
         session: Open database session.
@@ -143,9 +156,15 @@ def retrieve(
             )
         )
 
-    cited: dict[int, list[ProvenanceLink]] = defaultdict(list)
+    cited: dict[int, list[ChunkCitation]] = defaultdict(list)
     for chunk_id, citation, source in chunk_cites:
-        cited[chunk_id].append(_link("direct", citation, source, revisions[citation.article_id]))
+        cited[chunk_id].append(
+            ChunkCitation(
+                source=_source_ref(source),
+                page=citation.page,
+                revision=revisions[citation.article_id],
+            )
+        )
 
     return [
         RetrievedChunk(
@@ -158,7 +177,15 @@ def retrieve(
             lexical_rank=r.lexical_rank,
             revision=revisions[chunks[r.chunk_id].article_id],
             formulas=hits[r.chunk_id],
-            citations=sorted(cited[r.chunk_id], key=_sort_key),
+            citations=sorted(
+                cited[r.chunk_id],
+                key=lambda x: (
+                    x.source is None or x.source.title is None,
+                    (x.source.title if x.source else None) or "",
+                    x.page is None,
+                    x.page or "",
+                ),
+            ),
         )
         for r in ranked
     ]

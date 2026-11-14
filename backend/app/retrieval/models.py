@@ -56,6 +56,20 @@ class ProvenanceLink(BaseModel):
     revision: ArticleRevision
 
 
+class ChunkCitation(BaseModel):
+    """A source cited in a chunk's text, without a formula-level strength.
+
+    Attributes:
+        source: The cited source, None if unresolved.
+        page: Page cited, if any.
+        revision: Article revision that carries the citation.
+    """
+
+    source: SourceRef | None = None
+    page: str | None = None
+    revision: ArticleRevision
+
+
 class WikidataFormula(BaseModel):
     """A formula recorded on Wikidata.
 
@@ -109,7 +123,7 @@ class RetrievedChunk(BaseModel):
         lexical_rank: 1-based rank in the lexical list, None if absent.
         revision: Revision of the article the chunk comes from.
         formulas: Formulas in the chunk, ordered by index.
-        citations: Citations of the chunk text, as `direct` links.
+        citations: Sources cited in the chunk text, ordered by source title then page.
     """
 
     chunk_id: int
@@ -121,4 +135,4 @@ class RetrievedChunk(BaseModel):
     lexical_rank: int | None = None
     revision: ArticleRevision
     formulas: list[FormulaHit]
-    citations: list[ProvenanceLink]
+    citations: list[ChunkCitation]
