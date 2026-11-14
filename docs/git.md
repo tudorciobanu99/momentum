@@ -48,6 +48,15 @@ Body: [.github/pull_request_template.md](../.github/pull_request_template.md)
 - Squash merge only
 - Delete the branch after merging
 
+## Protection on `main`
+
+| Rule | Setting |
+|---|---|
+| Required checks | `backend`, `frontend` |
+| Direct pushes | Blocked |
+| Bypass | None |
+| Up to date with `main` | Not required |
+
 ## Hooks
 
 ```sh
