@@ -12,4 +12,4 @@ def health() -> dict[str, str]:
     Returns:
         A payload with status "ok".
     """
-    return {"status": 1}
+    return {"status": "ok"}
