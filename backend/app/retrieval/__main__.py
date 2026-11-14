@@ -6,9 +6,10 @@ from pathlib import Path
 
 from app.db.models import Chunk
 from app.db.session import SessionLocal
-from app.retrieval.client import RateLimitError, VoyageClient
+from app.retrieval.client import RateLimitError, RerankError, VoyageClient, VoyageReranker
 from app.retrieval.evals import EVALS_PATH, check_database, load_questions
 from app.retrieval.hybrid import hybrid_search
+from app.retrieval.rerank import rerank_candidates
 from app.retrieval.service import embed_all
 from app.settings import settings
 
@@ -26,19 +27,32 @@ def _validate(path: Path) -> int:
     return 0
 
 
-def _search(client: VoyageClient, query: str) -> int:
+def _search(client: VoyageClient, api_key: str, query: str, rerank: bool) -> int:
     try:
         with SessionLocal() as session:
             candidates = hybrid_search(session, client, query)
-            paths = {
-                c.chunk_id: session.get_one(Chunk, c.chunk_id).heading_path for c in candidates
-            }
+            ranked = None
+            if rerank:
+                reranker = VoyageReranker(api_key, settings.rerank_model)
+                ranked = rerank_candidates(session, reranker, query, candidates)
+            ids = [c.chunk_id for c in (ranked if ranked is not None else candidates)]
+            paths = {i: session.get_one(Chunk, i).heading_path for i in ids}
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
     except RateLimitError as e:
         print(f"rate limited: {e}", file=sys.stderr)
         return 1
+    except RerankError as e:
+        print(f"rerank failed: {e}", file=sys.stderr)
+        return 1
+    if ranked is not None:
+        for r in ranked:
+            print(
+                f"{r.chunk_id}\t{paths[r.chunk_id]}\trerank={r.rerank_score:.6f}"
+                f"\tfused={r.score:.6f}\tvector={r.vector_rank}\tlexical={r.lexical_rank}"
+            )
+        return 0
     for c in candidates:
         print(
             f"{c.chunk_id}\t{paths[c.chunk_id]}\t{c.score:.6f}"
@@ -59,8 +73,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.retrieval")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("embed", help="embed chunks that are new or changed")
-    search = sub.add_parser("search", help="print hybrid search candidates for a question")
+    search = sub.add_parser("search", help="print search results for a question")
     search.add_argument("query")
+    search.add_argument(
+        "--rerank",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="rerank candidates with Voyage (default), --no-rerank shows fused order",
+    )
     evals = sub.add_parser("evals", help="retrieval evaluation dataset")
     evals_sub = evals.add_subparsers(dest="action", required=True)
     validate = evals_sub.add_parser("validate", help="check the dataset against the database")
@@ -77,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         settings.voyage_api_key, settings.embedding_model, settings.embedding_dimension
     )
     if args.command == "search":
-        return _search(client, args.query)
+        return _search(client, settings.voyage_api_key, args.query, args.rerank)
     try:
         report = embed_all(SessionLocal, client)
     except RateLimitError as e:
