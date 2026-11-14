@@ -16,7 +16,6 @@
 		"typecheck": "tsc -b --noEmit"
 	},
 	"dependencies": {
-		"left-pad": "1.3.0",
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1"
 	},

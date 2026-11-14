@@ -6,3 +6,4 @@ export default function App() {
 		</main>
 	);
 }
+const  unused = 1
