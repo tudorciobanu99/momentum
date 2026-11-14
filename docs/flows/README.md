@@ -8,3 +8,4 @@ One file per flow, each a Mermaid diagram.
 | Ingestion: formulas | [ingestion-formulas.md](ingestion-formulas.md) |
 | Ingestion: Wikidata formulas | [ingestion-wikidata.md](ingestion-wikidata.md) |
 | Ingestion: citations | [ingestion-citations.md](ingestion-citations.md) |
+| Ingestion: report | [ingestion-report.md](ingestion-report.md) |

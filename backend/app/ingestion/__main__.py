@@ -1,4 +1,4 @@
-"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata|citations`."""
+"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata|citations|report`."""
 
 import argparse
 import asyncio
@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from app.db.session import SessionLocal
+from app.ingestion.report import render_report
 from app.ingestion.service import citations_all, extract_all, fetch_all
 from app.ingestion.titles import TITLES_PATH
 from app.ingestion.wikidata import fetch_wikidata
@@ -31,7 +32,18 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("formulas", help="extract formulas from stored articles")
     sub.add_parser("wikidata", help="fetch defining formulas from Wikidata")
     sub.add_parser("citations", help="extract citations and link them to formulas")
+    report_cmd = sub.add_parser("report", help="print the pilot report as Markdown")
+    report_cmd.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
+
+    if args.command == "report":
+        with SessionLocal() as session:
+            markdown = render_report(session)
+        if args.out:
+            args.out.write_text(markdown, encoding="utf-8")
+        else:
+            sys.stdout.write(markdown)
+        return 0
 
     if args.command == "formulas":
         counts = extract_all(SessionLocal)
