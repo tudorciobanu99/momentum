@@ -53,6 +53,24 @@ def _is_display(node: LexborNode, display: str | None) -> bool:
     return own == node.text(strip=True)
 
 
+def push_heading(headings: list[tuple[int, str]], tag: str, text: str) -> int:
+    """Pushes a heading onto the section stack, popping headings of the same or a lower level.
+
+    Args:
+        headings: Stack of (level, text) from the outermost heading down; modified in place.
+        tag: Heading tag, `h1` to `h6`.
+        text: Heading text.
+
+    Returns:
+        The heading level.
+    """
+    level = HEADING_LEVELS[tag]
+    while headings and headings[-1][0] >= level:
+        headings.pop()
+    headings.append((level, text))
+    return level
+
+
 def extract_formulas(html: str) -> list[FormulaRecord]:
     """Finds every `mw:Extension/math` element in document order.
 
@@ -76,10 +94,7 @@ def extract_formulas(html: str) -> list[FormulaRecord]:
         tag = node.tag
         attrs = node.attributes
         if tag in HEADING_LEVELS and node.parent is not None and node.parent.tag == "section":
-            level = HEADING_LEVELS[tag]
-            while headings and headings[-1][0] >= level:
-                headings.pop()
-            headings.append((level, node.text(strip=True)))
+            push_heading(headings, tag, node.text(strip=True))
         elif attrs.get("typeof") == MATH_TYPEOF and attrs.get("data-mw"):
             latex, display, qid = _extsrc(json.loads(attrs["data-mw"] or "{}"))
             if not latex:

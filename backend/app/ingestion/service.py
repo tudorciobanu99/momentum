@@ -9,10 +9,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Article, ArticleHtml, Formula
+from app.ingestion.chunks import chunk_article
 from app.ingestion.citations import DIRECT, INHERITED, SECTION, parse_citations
 from app.ingestion.client import WikiClient
 from app.ingestion.formulas import extract_formulas
-from app.ingestion.store import is_stored, save_article, save_citations, save_formulas
+from app.ingestion.store import (
+    is_stored,
+    save_article,
+    save_chunks,
+    save_citations,
+    save_formulas,
+)
 from app.ingestion.titles import TITLES_PATH, TitleEntry, load_titles, write_titles
 
 KINDS = (DIRECT, INHERITED, SECTION, "none")
@@ -221,3 +228,36 @@ def citations_all(sessions: sessionmaker[Session]) -> CitationsReport:
             kind = next((k for k in KINDS if k in kinds), "none")
             (report.display if display else report.inline)[kind] += 1
     return report
+
+
+def chunks_all(sessions: sessionmaker[Session]) -> dict[str, int]:
+    """Chunks every stored article and stores the chunks, replacing earlier ones.
+
+    Formulas and citations must already be extracted.
+
+    Args:
+        sessions: Session factory for the target database.
+
+    Returns:
+        Title to number of chunks stored.
+
+    Raises:
+        LookupError: An article's formulas or citations are not stored yet.
+    """
+    counts: dict[str, int] = {}
+    with sessions() as session:
+        rows = session.execute(select(Article.id, Article.title).order_by(Article.id)).all()
+    for article_id, title in rows:
+        with sessions.begin() as session:
+            html = session.scalar(
+                select(ArticleHtml.html).where(ArticleHtml.article_id == article_id)
+            )
+            records = chunk_article(html or "")
+            try:
+                save_chunks(session, article_id, records)
+            except LookupError:
+                raise LookupError(
+                    f"run `formulas` and `citations` first: missing for {title}"
+                ) from None
+        counts[title] = len(records)
+    return counts
