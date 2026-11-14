@@ -34,6 +34,7 @@ class Article(Base):
     topic: Mapped[str] = mapped_column(Text)
     license: Mapped[str] = mapped_column(Text)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    wikidata_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ArticleHtml(Base):
@@ -57,6 +58,7 @@ class Formula(Base):
     display: Mapped[bool]
     section_path: Mapped[str] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer)
+    wikidata_qid: Mapped[str | None] = mapped_column(Text, index=True)
 
 
 class Source(Base):
@@ -94,7 +96,7 @@ class Citation(Base):
 
 class FormulaCitation(Base):
     __tablename__ = "formula_citations"
-    __table_args__ = (CheckConstraint("kind IN ('direct', 'inherited')", name="kind"),)
+    __table_args__ = (CheckConstraint("kind IN ('direct', 'inherited', 'section')", name="kind"),)
 
     formula_id: Mapped[int] = mapped_column(
         ForeignKey("formulas.id", ondelete="CASCADE"), primary_key=True

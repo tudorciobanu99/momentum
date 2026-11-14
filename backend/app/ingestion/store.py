@@ -1,10 +1,18 @@
 """Writing fetched articles to the database."""
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.db.models import Article, ArticleHtml, Formula
+from app.db.models import (
+    Article,
+    ArticleHtml,
+    Citation,
+    Formula,
+    FormulaCitation,
+    Source,
+)
+from app.ingestion.citations import ParsedArticle, ParsedCitation
 from app.ingestion.formulas import FormulaRecord
 
 LICENSE = "CC BY-SA 4.0"
@@ -88,7 +96,86 @@ def save_formulas(session: Session, article_id: int, records: list[FormulaRecord
             display=r.display,
             section_path=r.section_path,
             position=r.position,
+            wikidata_qid=r.wikidata_qid,
         )
         for r in records
     )
     session.flush()
+
+
+def _upsert_source(session: Session, c: ParsedCitation) -> tuple[int | None, bool]:
+    if not (c.doi or c.isbn):
+        return None, False
+    by_doi = session.scalar(select(Source).where(Source.doi == c.doi)) if c.doi else None
+    by_isbn = session.scalar(select(Source).where(Source.isbn == c.isbn)) if c.isbn else None
+    merged = False
+    if by_doi and by_isbn and by_doi.id != by_isbn.id:
+        session.execute(
+            update(Citation).where(Citation.source_id == by_isbn.id).values(source_id=by_doi.id)
+        )
+        for name in ("authors", "year", "title"):
+            if getattr(by_doi, name) is None:
+                setattr(by_doi, name, getattr(by_isbn, name))
+        session.delete(by_isbn)
+        session.flush()
+        merged = True
+    source = by_doi or by_isbn
+    if source is None:
+        source = Source(authors=c.authors, year=c.year, title=c.title, doi=c.doi, isbn=c.isbn)
+        session.add(source)
+    else:
+        source.authors = source.authors or c.authors
+        source.year = source.year or c.year
+        source.title = source.title or c.title
+        source.doi = source.doi or c.doi
+        source.isbn = source.isbn or c.isbn
+    session.flush()
+    return source.id, merged
+
+
+def save_citations(session: Session, article_id: int, parsed: ParsedArticle) -> int:
+    """Replaces an article's citations and formula links; sources are upserted, never deleted.
+
+    A citation matches an existing source by DOI or ISBN and fills its missing fields. If its
+    DOI and ISBN match different sources they are merged into the DOI one. A citation with
+    neither has no source.
+    Formulas are matched to links by position, so the article's formulas must be stored first.
+
+    Args:
+        session: Open session; the caller owns the transaction.
+        article_id: Article the citations belong to.
+        parsed: Output of `parse_citations`.
+
+    Returns:
+        Number of sources merged into another.
+    """
+    session.execute(delete(Citation).where(Citation.article_id == article_id))
+    by_key: dict[str, Citation] = {}
+    merges = 0
+    for c in parsed.citations:
+        source_id, merged = _upsert_source(session, c)
+        merges += merged
+        citation = Citation(
+            article_id=article_id,
+            ref_key=c.ref_key,
+            page=c.page,
+            raw={**c.raw, "authors": c.authors, "year": c.year, "title": c.title},
+            source_id=source_id,
+        )
+        by_key[c.ref_key] = citation
+        session.add(citation)
+    session.flush()
+    formula_ids = {
+        position: formula_id
+        for position, formula_id in session.execute(
+            select(Formula.position, Formula.id).where(Formula.article_id == article_id)
+        )
+    }
+    session.add_all(
+        FormulaCitation(formula_id=formula_ids[position], citation_id=by_key[key].id, kind=kind)
+        for position, links in parsed.links.items()
+        if position in formula_ids
+        for key, kind in links.items()
+    )
+    session.flush()
+    return merges

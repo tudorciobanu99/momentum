@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 MATH_TYPEOF = "mw:Extension/math"
+REF_TYPEOF = "mw:Extension/ref"
 HEADING_LEVELS = {f"h{n}": n for n in range(1, 7)}
 BLOCK_PARENTS = {"dd", "p"}
 
@@ -21,6 +22,7 @@ class FormulaRecord:
         section_path: Headings from the article title down, joined with " > ".
         position: Zero-based ordinal of the formula element among all elements of the
             document in document order. Stable for a pinned revision.
+        wikidata_qid: Item id from `data-mw.attrs.qid`, when the formula has one.
     """
 
     index: int
@@ -28,12 +30,13 @@ class FormulaRecord:
     display: bool
     section_path: str
     position: int
+    wikidata_qid: str | None = None
 
 
-def _extsrc(data_mw: dict) -> tuple[str, str | None]:
+def _extsrc(data_mw: dict) -> tuple[str, str | None, str | None]:
     attrs = data_mw.get("attrs") or {}
     body = data_mw.get("body") or {}
-    return str(body.get("extsrc") or "").strip(), attrs.get("display")
+    return str(body.get("extsrc") or "").strip(), attrs.get("display"), attrs.get("qid") or None
 
 
 def _is_display(node: LexborNode, display: str | None) -> bool:
@@ -42,14 +45,20 @@ def _is_display(node: LexborNode, display: str | None) -> bool:
     parent = node.parent
     if parent is None or parent.tag not in BLOCK_PARENTS:
         return False
-    return parent.text(strip=True) == node.text(strip=True)
+    own = "".join(
+        child.text(strip=True)
+        for child in parent.iter(include_text=True)
+        if REF_TYPEOF not in (child.attributes.get("typeof") or "").split()
+    )
+    return own == node.text(strip=True)
 
 
 def extract_formulas(html: str) -> list[FormulaRecord]:
     """Finds every `mw:Extension/math` element in document order.
 
     Display is taken from `attrs.display` when set. When unset, a formula that is the only
-    content of its `dd` (legacy indented math) or `p` counts as display. `{{math}}` and
+    content of its `dd` (legacy indented math) or `p`, not counting ref markers, counts as
+    display. `{{math}}` and
     `{{mvar}}` templates render as plain spans and are not formulas.
 
     Args:
@@ -72,11 +81,11 @@ def extract_formulas(html: str) -> list[FormulaRecord]:
                 headings.pop()
             headings.append((level, node.text(strip=True)))
         elif attrs.get("typeof") == MATH_TYPEOF and attrs.get("data-mw"):
-            latex, display = _extsrc(json.loads(attrs["data-mw"] or "{}"))
+            latex, display, qid = _extsrc(json.loads(attrs["data-mw"] or "{}"))
             if not latex:
                 continue
             path = " > ".join([title, *(text for _, text in headings)])
             records.append(
-                FormulaRecord(len(records), latex, _is_display(node, display), path, position)
+                FormulaRecord(len(records), latex, _is_display(node, display), path, position, qid)
             )
     return records
