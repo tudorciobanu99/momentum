@@ -17,6 +17,20 @@ jobs:
   backend:
     name: backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17
+        env:
+          POSTGRES_USER: momentum
+          POSTGRES_PASSWORD: momentum
+          POSTGRES_DB: momentum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U momentum -d momentum"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,4 +78,6 @@ jobs:
       - name: Pytest
         if: steps.changes.outputs.run == 'true'
         working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://momentum:momentum@localhost:5432/momentum
         run: uv run pytest

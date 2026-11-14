@@ -9,6 +9,10 @@
 | API | FastAPI |
 | Live updates | Server-sent events (SSE)|
 | Database | Postgres with pgvector |
+| ORM | SQLAlchemy 2 |
+| Postgres driver | psycopg 3 |
+| Migrations | Alembic |
+| Local services | Docker Compose |
 | Embeddings | Voyage `voyage-4` |
 | Reranker | Voyage `rerank-3-lite` |
 | LLMs | Provider agnostic |
