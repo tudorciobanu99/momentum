@@ -40,7 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "chunks":
-        counts = chunks_all(SessionLocal)
+        try:
+            counts = chunks_all(SessionLocal)
+        except LookupError as e:
+            print(e, file=sys.stderr)
+            return 1
         print(f"{sum(counts.values())} chunks from {len(counts)} articles")
         return 0
 

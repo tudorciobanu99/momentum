@@ -240,6 +240,9 @@ def chunks_all(sessions: sessionmaker[Session]) -> dict[str, int]:
 
     Returns:
         Title to number of chunks stored.
+
+    Raises:
+        LookupError: An article's formulas or citations are not stored yet.
     """
     counts: dict[str, int] = {}
     with sessions() as session:
@@ -250,6 +253,11 @@ def chunks_all(sessions: sessionmaker[Session]) -> dict[str, int]:
                 select(ArticleHtml.html).where(ArticleHtml.article_id == article_id)
             )
             records = chunk_article(html or "")
-            save_chunks(session, article_id, records)
+            try:
+                save_chunks(session, article_id, records)
+            except LookupError:
+                raise LookupError(
+                    f"run `formulas` and `citations` first: missing for {title}"
+                ) from None
         counts[title] = len(records)
     return counts

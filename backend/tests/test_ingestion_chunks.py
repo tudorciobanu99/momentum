@@ -311,3 +311,20 @@ def test_store_is_idempotent(db: sessionmaker[Session]) -> None:
         ]
         assert again == counts
         assert not ids & set(s.scalars(select(Chunk.id)))
+
+
+def test_chunks_before_formulas_and_citations_fail_clearly(db: sessionmaker[Session]) -> None:
+    with db.begin() as s:
+        save_article(
+            s,
+            title="kepler_problem",
+            rev_id=7,
+            url="https://example.org/k",
+            wikidata_qid=None,
+            topic="mechanics",
+            html=load("kepler_problem"),
+        )
+    with pytest.raises(LookupError, match="run `formulas` and `citations` first.*kepler_problem"):
+        chunks_all(db)
+    with db() as s:
+        assert s.scalar(select(func.count()).select_from(Chunk)) == 0
