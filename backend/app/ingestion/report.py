@@ -214,7 +214,7 @@ def _samples(session: Session) -> list[str]:
     lines = [
         "## Sample chains",
         "",
-        "Lowest formula id per kind, among citations with a source.",
+        "Lowest formula id per kind, among citations with a source, preferring one with a page.",
         "",
     ]
     for kind in (DIRECT, INHERITED, SECTION):
@@ -225,7 +225,7 @@ def _samples(session: Session) -> list[str]:
             .join(FormulaCitation, FormulaCitation.citation_id == Citation.id)
             .join(Formula, Formula.id == FormulaCitation.formula_id)
             .where(FormulaCitation.kind == kind)
-            .order_by(Formula.id, Citation.id)
+            .order_by(Citation.page.is_(None), Formula.id, Citation.id)
             .limit(1)
         ).first()
         if row is None:
@@ -233,9 +233,9 @@ def _samples(session: Session) -> list[str]:
             continue
         source, page, article, formula = row
         by = f" ({source.authors}, {source.year})" if source.authors and source.year else ""
-        at = f" page {page}" if page else ""
+        at = f"p. {page}" if page else "no page"
         lines.append(
-            f"- {kind}: {_cell(source.title)}{_cell(by)} → citation{_cell(at)} → "
+            f"- {kind}: {_cell(source.title)}{_cell(by)} → {_cell(at)} → "
             f"{article.title} {article.url} → `{formula.latex}`"
         )
     return [*lines, ""]

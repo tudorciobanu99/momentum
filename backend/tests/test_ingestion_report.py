@@ -162,8 +162,7 @@ def test_citation_counts(db: sessionmaker[Session]) -> None:
 def test_sample_chain_format(db: sessionmaker[Session]) -> None:
     out = render(db)
     assert (
-        "- direct: Orbits (Doe, J., 1999) → citation page 7 → Alpha https://example.org/alpha "
-        "→ `f1`"
+        "- direct: Orbits (Doe, J., 1999) → p. 7 → Alpha https://example.org/alpha → `f1`"
     ) in out
-    assert "- inherited: Orbits (Doe, J., 1999) → citation page 7 → Alpha" in out
+    assert "- inherited: Orbits (Doe, J., 1999) → p. 7 → Alpha" in out
     assert "→ `f3`" in out
