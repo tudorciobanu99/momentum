@@ -6,4 +6,5 @@ export default function App() {
 		</main>
 	);
 }
-const  unused = 1
+
+export const n: number = "a";
