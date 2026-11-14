@@ -16,6 +16,10 @@ class Settings(BaseSettings):
         embedding_model: Voyage embedding model.
         embedding_dimension: Embedding length, matching the `chunks.embedding` column.
         embedding_batch_size: Texts per embedding request.
+        vector_top_k: Vector results fused.
+        lexical_top_k: Lexical results fused.
+        rrf_k: Reciprocal rank fusion constant.
+        candidate_limit: Candidates returned by hybrid search.
     """
 
     model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
@@ -25,6 +29,10 @@ class Settings(BaseSettings):
     embedding_model: str = "voyage-4"
     embedding_dimension: int = 1024
     embedding_batch_size: int = 128
+    vector_top_k: int = 50
+    lexical_top_k: int = 50
+    rrf_k: int = 60
+    candidate_limit: int = 30
 
 
 settings = Settings()

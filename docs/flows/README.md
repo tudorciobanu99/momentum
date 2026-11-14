@@ -13,3 +13,4 @@ One file per flow, each a Mermaid diagram.
 | Retrieval: embed | [retrieval-embed.md](retrieval-embed.md) |
 | Retrieval: evals | [retrieval-evals.md](retrieval-evals.md) |
 | Retrieval: lexical | [retrieval-lexical.md](retrieval-lexical.md) |
+| Retrieval: hybrid | [retrieval-hybrid.md](retrieval-hybrid.md) |
