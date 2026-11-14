@@ -1,4 +1,4 @@
-"""Command line entry point: `python -m app.ingestion fetch|formulas`."""
+"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata`."""
 
 import argparse
 import asyncio
@@ -8,6 +8,7 @@ from pathlib import Path
 from app.db.session import SessionLocal
 from app.ingestion.service import extract_all, fetch_all
 from app.ingestion.titles import TITLES_PATH
+from app.ingestion.wikidata import fetch_wikidata
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,11 +25,22 @@ def main(argv: list[str] | None = None) -> int:
     fetch = sub.add_parser("fetch", help="fetch articles at pinned revisions")
     fetch.add_argument("--titles", type=Path, default=TITLES_PATH)
     sub.add_parser("formulas", help="extract formulas from stored articles")
+    sub.add_parser("wikidata", help="fetch defining formulas from Wikidata")
     args = parser.parse_args(argv)
 
     if args.command == "formulas":
         counts = extract_all(SessionLocal)
         print(f"{sum(counts.values())} formulas from {len(counts)} articles")
+        return 0
+
+    if args.command == "wikidata":
+        wikidata = asyncio.run(fetch_wikidata(SessionLocal))
+        print(
+            f"formulas for {len(wikidata.with_formulas)}, none for {len(wikidata.none_recorded)}, "
+            f"no item {len(wikidata.no_qid)}, failed {len(wikidata.failed)}"
+        )
+        for title, reason in wikidata.failed.items():
+            print(f"failed {title}: {reason}", file=sys.stderr)
         return 0
 
     report = asyncio.run(fetch_all(SessionLocal, args.titles))

@@ -1,0 +1,33 @@
+{
+  "entities": {
+    "Q11397": {
+      "type": "item",
+      "id": "Q11397",
+      "lastrevid": 2546144240,
+      "modified": "2026-09-15T10:29:07Z",
+      "claims": {
+        "P31": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "ba87ef0de2f319b45afa228b6fe013d97dd564e3",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 137582043,
+                  "id": "Q137582043"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            },
+            "type": "statement",
+            "id": "Q11397$f5d9ef50-460a-c00f-388d-0a856b52eac4",
+            "rank": "normal"
+          }
+        ]
+      }
+    }
+  }
+}
