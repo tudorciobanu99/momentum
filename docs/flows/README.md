@@ -12,6 +12,7 @@ One file per flow, each a Mermaid diagram.
 | Ingestion: report | [ingestion-report.md](ingestion-report.md) |
 | Retrieval: embed | [retrieval-embed.md](retrieval-embed.md) |
 | Retrieval: evals | [retrieval-evals.md](retrieval-evals.md) |
+| Retrieval: eval runner | [retrieval-eval-runner.md](retrieval-eval-runner.md) |
 | Retrieval: lexical | [retrieval-lexical.md](retrieval-lexical.md) |
 | Retrieval: hybrid | [retrieval-hybrid.md](retrieval-hybrid.md) |
 | Retrieval: rerank | [retrieval-rerank.md](retrieval-rerank.md) |

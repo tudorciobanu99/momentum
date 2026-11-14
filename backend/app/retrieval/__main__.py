@@ -8,8 +8,10 @@ from pathlib import Path
 from app.db.models import Chunk
 from app.db.session import SessionLocal
 from app.retrieval.client import RateLimitError, RerankError, VoyageClient, VoyageReranker
+from app.retrieval.eval_runner import format_reports, run_evals
 from app.retrieval.evals import EVALS_PATH, check_database, load_questions
 from app.retrieval.hybrid import hybrid_search
+from app.retrieval.langsmith_results import LangSmithResults, ResultsClient
 from app.retrieval.models import ProvenanceLink, RetrievedChunk
 from app.retrieval.rerank import rerank_candidates
 from app.retrieval.retrieve import retrieve
@@ -27,6 +29,51 @@ def _validate(path: Path) -> int:
         print(f"{len(problems)} problems in {len(questions)} questions", file=sys.stderr)
         return 1
     print(f"{len(questions)} questions valid")
+    return 0
+
+
+def _run_evals(
+    client: VoyageClient,
+    api_key: str,
+    path: Path,
+    compare_merged: bool,
+    limit: int | None,
+    upload: bool,
+) -> int:
+    questions, problems = load_questions(path)
+    if problems:
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        return 1
+    if limit is not None:
+        questions = questions[: max(limit, 0)]
+    results: ResultsClient | None = None
+    if upload and settings.langsmith_api_key:
+        results = LangSmithResults(settings.langsmith_api_key)
+    elif upload:
+        print(
+            "warning: LANGSMITH_API_KEY is not set, results are printed but not uploaded",
+            file=sys.stderr,
+        )
+    try:
+        run = run_evals(
+            SessionLocal,
+            client,
+            VoyageReranker(api_key, settings.rerank_model),
+            questions,
+            results,
+            compare_merged,
+            settings.langsmith_project,
+        )
+    except RateLimitError as e:
+        print(f"rate limited: {e}", file=sys.stderr)
+        return 1
+    except RerankError as e:
+        print(f"rerank failed: {e}", file=sys.stderr)
+        return 1
+    print(format_reports(run.reports))
+    if run.uploaded:
+        print("\nuploaded to LangSmith")
     return 0
 
 
@@ -142,9 +189,18 @@ def main(argv: list[str] | None = None) -> int:
     evals_sub = evals.add_subparsers(dest="action", required=True)
     validate = evals_sub.add_parser("validate", help="check the dataset against the database")
     validate.add_argument("--path", type=Path, default=EVALS_PATH)
+    run = evals_sub.add_parser("run", help="measure retrieval quality on the dataset")
+    run.add_argument("--path", type=Path, default=EVALS_PATH)
+    run.add_argument(
+        "--compare-merged",
+        action="store_true",
+        help="also evaluate a chunking with short chunks merged, in a temporary schema",
+    )
+    run.add_argument("--limit", type=int, default=None, help="run only the first N questions")
+    run.add_argument("--no-upload", action="store_true", help="print results, skip LangSmith")
     args = parser.parse_args(argv)
 
-    if args.command == "evals":
+    if args.command == "evals" and args.action == "validate":
         return _validate(args.path)
 
     if not settings.voyage_api_key:
@@ -153,6 +209,15 @@ def main(argv: list[str] | None = None) -> int:
     client = VoyageClient(
         settings.voyage_api_key, settings.embedding_model, settings.embedding_dimension
     )
+    if args.command == "evals":
+        return _run_evals(
+            client,
+            settings.voyage_api_key,
+            args.path,
+            args.compare_merged,
+            args.limit,
+            not args.no_upload,
+        )
     if args.command == "search":
         return _search(client, settings.voyage_api_key, args.query, args.rerank)
     if args.command == "retrieve":

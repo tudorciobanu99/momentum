@@ -22,6 +22,8 @@ class Settings(BaseSettings):
         candidate_limit: Candidates returned by hybrid search.
         rerank_model: Voyage rerank model.
         rerank_top_n: Candidates kept after reranking.
+        langsmith_api_key: LangSmith API key, evaluation results are not uploaded without it.
+        langsmith_project: LangSmith project that experiments are named after.
     """
 
     model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
@@ -37,6 +39,8 @@ class Settings(BaseSettings):
     candidate_limit: int = 30
     rerank_model: str = "rerank-3-lite"
     rerank_top_n: int = 10
+    langsmith_api_key: str | None = None
+    langsmith_project: str = "momentum"
 
 
 settings = Settings()
