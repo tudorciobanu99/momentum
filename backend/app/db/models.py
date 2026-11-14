@@ -86,7 +86,7 @@ class Citation(Base):
     page: Mapped[str | None] = mapped_column(Text)
     raw: Mapped[dict[str, Any]] = mapped_column(JSONB)
     source_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sources.id", ondelete="CASCADE"), index=True
+        ForeignKey("sources.id", ondelete="SET NULL"), index=True
     )
 
     source: Mapped[Source | None] = relationship()

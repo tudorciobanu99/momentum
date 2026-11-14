@@ -116,7 +116,7 @@ def upgrade() -> None:
         sa.Column("raw", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("source_id", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(["article_id"], ["articles.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["source_id"], ["sources.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["source_id"], ["sources.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("article_id", "ref_key", "page", postgresql_nulls_not_distinct=True),
     )
