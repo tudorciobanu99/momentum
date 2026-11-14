@@ -1,9 +1,8 @@
-import os
 """FastAPI application entry point."""
 
 from fastapi import FastAPI
 
-app = FastAPI(title="Momentum")
+app = FastAPI( title = "Momentum" )
 
 
 @app.get("/api/health")
