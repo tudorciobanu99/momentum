@@ -1,4 +1,4 @@
-"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata`."""
+"""Command line entry point: `python -m app.ingestion fetch|formulas|wikidata|citations`."""
 
 import argparse
 import asyncio
@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from app.db.session import SessionLocal
-from app.ingestion.service import extract_all, fetch_all
+from app.ingestion.service import citations_all, extract_all, fetch_all
 from app.ingestion.titles import TITLES_PATH
 from app.ingestion.wikidata import fetch_wikidata
 
@@ -26,11 +26,24 @@ def main(argv: list[str] | None = None) -> int:
     fetch.add_argument("--titles", type=Path, default=TITLES_PATH)
     sub.add_parser("formulas", help="extract formulas from stored articles")
     sub.add_parser("wikidata", help="fetch defining formulas from Wikidata")
+    sub.add_parser("citations", help="extract citations and link them to formulas")
     args = parser.parse_args(argv)
 
     if args.command == "formulas":
         counts = extract_all(SessionLocal)
         print(f"{sum(counts.values())} formulas from {len(counts)} articles")
+        return 0
+
+    if args.command == "citations":
+        c = citations_all(SessionLocal)
+        display = c.display_direct + c.display_inherited + c.display_none
+        print(
+            f"{c.citations} citations ({c.with_doi} doi, {c.with_isbn} isbn); "
+            f"display formulas {display}: direct {c.display_direct}, "
+            f"inherited {c.display_inherited}, none {c.display_none}; "
+            f"inline linked {c.inline_linked}; "
+            f"section-level inheritance would add {c.section_extra}"
+        )
         return 0
 
     if args.command == "wikidata":

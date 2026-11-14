@@ -13,5 +13,6 @@ flowchart TD
     F --> J[Section path from section headings]
     H --> J
     I --> J
-    J --> K[Delete article formulas, insert new rows]
+    J --> Q[Read attrs.qid into wikidata_qid]
+    Q --> K[Delete article formulas, insert new rows]
 ```

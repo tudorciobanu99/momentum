@@ -93,6 +93,17 @@ def test_standalone_paragraph_is_display() -> None:
     assert [r.display for r in extract_formulas(html)] == [True, False]
 
 
+def test_legacy_dd_with_trailing_ref_is_display() -> None:
+    ref = '<sup typeof="mw:Extension/ref" data-mw="{}"><a href="#x">[1]</a></sup>'
+    html = page("<dl><dd>" + math("x") + ref + "</dd></dl>")
+    assert [r.display for r in extract_formulas(html)] == [True]
+
+
+def test_qid_read_from_attrs() -> None:
+    html = page(math("a", {"qid": "Q42"}) + math("b"))
+    assert [r.wikidata_qid for r in extract_formulas(html)] == ["Q42", None]
+
+
 def test_dd_with_text_is_inline() -> None:
     html = page("<dl><dd>where " + math("x") + "</dd></dl>")
     assert [r.display for r in extract_formulas(html)] == [False]
@@ -181,6 +192,14 @@ def test_store_and_idempotent(db: sessionmaker[Session]) -> None:
     assert [(r.index, r.latex, r.display, r.section_path, r.position) for r in rows] == [
         (r.index, r.latex, r.display, r.section_path, r.position) for r in records
     ]
+
+
+def test_qid_is_stored(db: sessionmaker[Session]) -> None:
+    article_id = add_article(db, "Kepler problem", "kepler_problem")
+    with db.begin() as s:
+        save_formulas(s, article_id, extract_formulas(page(math("a", {"qid": "Q42"}))))
+    with db() as s:
+        assert s.scalars(select(Formula.wikidata_qid)).all() == ["Q42"]
 
 
 def test_extract_all_replaces_per_article(db: sessionmaker[Session]) -> None:

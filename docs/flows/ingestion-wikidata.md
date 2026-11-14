@@ -11,4 +11,6 @@ flowchart TD
     F --> G{Any P2534?}
     G -- no --> H[Report none recorded]
     G -- yes --> I[Replace wikidata_formulas rows for article]
+    H --> J[Set articles.wikidata_checked_at]
+    I --> J
 ```

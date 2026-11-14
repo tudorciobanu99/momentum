@@ -140,6 +140,20 @@ def test_store_is_idempotent(sessions: sessionmaker[Session]) -> None:
     assert rows() == first
 
 
+def test_checked_at_set_for_every_checked_item(sessions: sessionmaker[Session]) -> None:
+    _add_articles(sessions, QIDS)
+    _run(sessions, FakeWikidata())
+    with sessions() as s:
+        checked = {a.title: a.wikidata_checked_at is not None for a in s.scalars(select(Article))}
+    assert checked == {
+        "Gravity": True,
+        "Impedance": True,
+        "Classical": True,
+        "Orphan": False,
+        "Gone": False,
+    }
+
+
 def test_uses_shared_client(
     sessions: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:

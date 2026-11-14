@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Article, WikidataFormula
@@ -121,7 +121,7 @@ def parse_entity(data: dict[str, Any], qid: str) -> list[ParsedFormula]:
 def save_wikidata_formulas(
     session: Session, article_id: int, qid: str, formulas: list[ParsedFormula]
 ) -> None:
-    """Replaces an article's Wikidata formulas, so re-runs leave the same rows.
+    """Replaces an article's Wikidata formulas and stamps `wikidata_checked_at`.
 
     Args:
         session: Open session; the caller owns the transaction.
@@ -130,6 +130,9 @@ def save_wikidata_formulas(
         formulas: Formulas to store.
     """
     session.execute(delete(WikidataFormula).where(WikidataFormula.article_id == article_id))
+    session.execute(
+        update(Article).where(Article.id == article_id).values(wikidata_checked_at=func.now())
+    )
     session.add_all(
         WikidataFormula(
             article_id=article_id,

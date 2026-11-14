@@ -8,10 +8,11 @@ from urllib.parse import quote, urlencode
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Article, ArticleHtml
+from app.db.models import Article, ArticleHtml, Formula
+from app.ingestion.citations import DIRECT, parse_citations
 from app.ingestion.client import WikiClient
 from app.ingestion.formulas import extract_formulas
-from app.ingestion.store import is_stored, save_article, save_formulas
+from app.ingestion.store import is_stored, save_article, save_citations, save_formulas
 from app.ingestion.titles import TITLES_PATH, TitleEntry, load_titles, write_titles
 
 
@@ -28,6 +29,31 @@ class FetchReport:
     stored: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class CitationsReport:
+    """Outcome of a citations run.
+
+    Attributes:
+        citations: Citations stored.
+        with_doi: Citations with a DOI.
+        with_isbn: Citations with an ISBN and no DOI.
+        display_direct: Display formulas with at least one direct link.
+        display_inherited: Display formulas with only inherited links.
+        display_none: Display formulas without links.
+        inline_linked: Inline formulas with links.
+        section_extra: Display formulas section-level inheritance would link; not stored.
+    """
+
+    citations: int = 0
+    with_doi: int = 0
+    with_isbn: int = 0
+    display_direct: int = 0
+    display_inherited: int = 0
+    display_none: int = 0
+    inline_linked: int = 0
+    section_extra: int = 0
 
 
 def revision_url(title: str, rev_id: int) -> str:
@@ -158,3 +184,49 @@ def extract_all(sessions: sessionmaker[Session]) -> dict[str, int]:
             save_formulas(session, article_id, records)
         counts[title] = len(records)
     return counts
+
+
+def citations_all(sessions: sessionmaker[Session]) -> CitationsReport:
+    """Extracts and stores citations and formula links for every article, replacing earlier ones.
+
+    Formulas must already be extracted.
+
+    Args:
+        sessions: Session factory for the target database.
+
+    Returns:
+        Counts over all articles.
+    """
+    report = CitationsReport()
+    with sessions() as session:
+        ids = session.scalars(select(Article.id).order_by(Article.id)).all()
+    for article_id in ids:
+        with sessions.begin() as session:
+            html = session.scalar(
+                select(ArticleHtml.html).where(ArticleHtml.article_id == article_id)
+            )
+            formulas = {
+                position: display
+                for position, display in session.execute(
+                    select(Formula.position, Formula.display).where(
+                        Formula.article_id == article_id
+                    )
+                )
+            }
+            parsed = parse_citations(html or "", formulas)
+            save_citations(session, article_id, parsed)
+        report.citations += len(parsed.citations)
+        report.with_doi += sum(1 for c in parsed.citations if c.doi)
+        report.with_isbn += sum(1 for c in parsed.citations if c.isbn)
+        report.section_extra += parsed.section_extra
+        for position, display in formulas.items():
+            links = parsed.links.get(position)
+            if not display:
+                report.inline_linked += bool(links)
+            elif not links:
+                report.display_none += 1
+            elif DIRECT in links.values():
+                report.display_direct += 1
+            else:
+                report.display_inherited += 1
+    return report

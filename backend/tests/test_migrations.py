@@ -29,3 +29,21 @@ def test_upgrade_and_downgrade(alembic_config: Config, test_database_url: str) -
 
     assert not TABLES & set(inspect(engine).get_table_names())
     engine.dispose()
+
+
+def test_revision_0002_up_and_down(alembic_config: Config, test_database_url: str) -> None:
+    engine = create_engine(test_database_url)
+    command.upgrade(alembic_config, "head")
+    try:
+        inspector = inspect(engine)
+        assert "wikidata_qid" in {c["name"] for c in inspector.get_columns("formulas")}
+        assert "wikidata_checked_at" in {c["name"] for c in inspector.get_columns("articles")}
+        assert "ix_formulas_wikidata_qid" in {i["name"] for i in inspector.get_indexes("formulas")}
+
+        command.downgrade(alembic_config, "0001")
+        inspector = inspect(engine)
+        assert "wikidata_qid" not in {c["name"] for c in inspector.get_columns("formulas")}
+        assert "wikidata_checked_at" not in {c["name"] for c in inspector.get_columns("articles")}
+    finally:
+        command.upgrade(alembic_config, "head")
+        engine.dispose()
