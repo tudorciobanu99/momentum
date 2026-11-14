@@ -4,6 +4,7 @@
 
 | Interface | Purpose | Consumers |
 |---|---|---|
+| `GET /api/health` | Liveness check | Frontend |
 
 ## Sandbox
 
