@@ -267,7 +267,8 @@ def _citation(ref_key: str, note: LexborNode, bib: _Bibliography) -> ParsedCitat
     return ParsedCitation(ref_key, None, {"text": text}, **_text_fields(text))
 
 
-def _note_id(sup: LexborNode) -> str | None:
+def ref_note_id(sup: LexborNode) -> str | None:
+    """Returns the note id a `mw:Extension/ref` marker points to, if any."""
     link = sup.css_first('a[href*="#cite_note"]')
     if link:
         return unquote((link.attributes["href"] or "").split("#", 1)[1])
@@ -303,7 +304,7 @@ def _flatten(root: LexborNode, notes: Mapping[str, LexborNode], flat: _Flat) -> 
                     flat.index[child.mem_id] = len(flat.tokens)
                     flat.tokens.append(("math", child))
                 elif REF_TYPEOF in typeof and tag == "sup":
-                    note_id = _note_id(child)
+                    note_id = ref_note_id(child)
                     if note_id is not None and note_id in notes:
                         flat.tokens.append(("ref", note_id))
                         flat.section_refs.setdefault(sections[-1], {})[note_id] = None
