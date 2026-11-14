@@ -1,5 +1,6 @@
 """Retrieval evaluation dataset: models, validation and scoring helpers."""
 
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -17,6 +18,70 @@ MAX_QUESTIONS = 250
 MIN_PER_TOPIC = 15
 MIN_FORMULA_SHARE = 0.3
 MAX_ANCHOR_CHARS = 300
+PARAPHRASE_RUN = 4
+STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "by",
+        "can",
+        "could",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "so",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+)
 
 
 class GoldPassage(BaseModel):
@@ -86,6 +151,29 @@ def normalise(text: str) -> str:
     return " ".join(text.split())
 
 
+def shared_run(first: str, second: str, length: int = PARAPHRASE_RUN) -> str | None:
+    """Finds a run of consecutive non-stopwords that occurs in both texts.
+
+    Args:
+        first: First text.
+        second: Second text.
+        length: Number of consecutive words that counts as a copy.
+
+    Returns:
+        The first shared run in `first`, or None.
+    """
+
+    def words(text: str) -> list[str]:
+        return [w for w in re.findall(r"\w+", text.lower()) if w not in STOPWORDS]
+
+    a, b = words(first), words(second)
+    runs = {tuple(b[i : i + length]) for i in range(len(b) - length + 1)}
+    for i in range(len(a) - length + 1):
+        if tuple(a[i : i + length]) in runs:
+            return " ".join(a[i : i + length])
+    return None
+
+
 def is_hit(chunk_text: str, gold_passages: list[GoldPassage]) -> bool:
     """Tells whether a retrieved chunk contains any gold anchor.
 
@@ -141,6 +229,11 @@ def check_schema(questions: list[EvalQuestion]) -> list[str]:
         duplicates = sorted(v for v, n in Counter(values).items() if n > 1)
         if duplicates:
             problems.append(f"duplicate {label}s: {duplicates}")
+    for q in questions:
+        for p in q.gold_passages:
+            run = shared_run(q.question, p.anchor)
+            if run:
+                problems.append(f"{q.id}: question copies anchor wording: {run!r}")
     per_topic = Counter(q.topic for q in questions)
     for topic in TOPICS:
         if per_topic[topic] < MIN_PER_TOPIC:
@@ -181,16 +274,20 @@ def check_database(session: Session, questions: list[EvalQuestion]) -> list[str]
     """
     articles = {(a.title, a.rev_id): a.id for a in session.scalars(select(Article))}
     texts: dict[int, tuple[str, str | None]] = {}
+    headings: dict[int, list[tuple[str, str]]] = {}
     formulas = {(a, i) for a, i in session.execute(select(Formula.article_id, Formula.index))}
 
     def article_texts(article_id: int) -> tuple[str, str | None]:
         if article_id not in texts:
-            chunks = session.scalars(
-                select(Chunk.text).where(Chunk.article_id == article_id).order_by(Chunk.index)
-            )
+            rows = session.execute(
+                select(Chunk.text, Chunk.heading_path)
+                .where(Chunk.article_id == article_id)
+                .order_by(Chunk.index)
+            ).all()
+            headings[article_id] = [(normalise(t), h) for t, h in rows]
             html = session.get(ArticleHtml, article_id)
             texts[article_id] = (
-                normalise("\n".join(chunks)),
+                normalise("\n".join(t for t, _ in rows)),
                 normalise(LexborHTMLParser(html.html).text()) if html else None,
             )
         return texts[article_id]
@@ -206,6 +303,10 @@ def check_database(session: Session, questions: list[EvalQuestion]) -> list[str]
             chunk_text, html_text = article_texts(article_id)
             if anchor not in chunk_text and (html_text is None or anchor not in html_text):
                 problems.append(f"{q.id}: anchor not found in {p.article!r}: {p.anchor[:60]!r}")
+            for text, heading in headings[article_id]:
+                run = anchor in text and shared_run(q.question, heading)
+                if run:
+                    problems.append(f"{q.id}: question copies heading path: {run!r}")
         for f in q.gold_formulas:
             article_id = articles.get((f.article, f.rev_id))
             if article_id is None:

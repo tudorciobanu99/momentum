@@ -4,7 +4,7 @@ import json
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Article, ArticleHtml, Chunk, Formula
@@ -18,6 +18,7 @@ from app.retrieval.evals import (
     is_hit,
     load_questions,
     parse_questions,
+    shared_run,
 )
 
 
@@ -119,6 +120,26 @@ def test_anchor_at_limit_is_accepted() -> None:
     questions, problems = parse_questions(json.dumps(question(1, gold_passages=gold)))
     assert problems == []
     assert len(questions) == 1
+
+
+def test_shared_run_ignores_stopwords_and_case() -> None:
+    anchor = "The force on a charged particle is proportional to its velocity."
+    assert shared_run("Why is the FORCE on charged particle proportional to velocity?", anchor)
+    assert (
+        shared_run("force charged particle proportional", anchor)
+        == "force charged particle proportional"
+    )
+    assert shared_run("How does force act on a charged body?", anchor) is None
+    assert shared_run("", anchor) is None
+
+
+def test_question_copying_anchor_is_an_error() -> None:
+    questions = dataset()
+    questions[0].question = "Why is anchor 0 repeated here?"
+    questions[0].gold_passages[0].anchor = "one two three four five"
+    questions[0].question = "Does two three four five hold?"
+    problems = check_schema(questions)
+    assert any("q000: question copies anchor wording" in p for p in problems)
 
 
 PASSAGES = [
@@ -229,3 +250,16 @@ def test_database_check_reports_problems(
     problems = check(db, **overrides)
     assert len(problems) == 1
     assert expected in problems[0]
+
+
+def test_database_check_rejects_question_copying_heading(db: sessionmaker[Session]) -> None:
+    passages = [{"article": "Alpha", "rev_id": 100, "anchor": "Second law holds"}]
+    with db.begin() as s:
+        s.execute(
+            update(Chunk).values(heading_path="Alpha > Rotating frames and fictitious forces")
+        )
+    problems = check(
+        db, gold_passages=passages, question="What are rotating frames fictitious forces?"
+    )
+    assert len(problems) == 1
+    assert "copies heading path" in problems[0]
