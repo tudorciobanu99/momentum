@@ -17,7 +17,7 @@ The coordinator tells you which step to run.
 |---|---|---|
 | Discovery | The idea, the context in the brief, existing Linear issues | Questions and assumptions. No draft |
 | Definition | The answers | One draft epic and its stories. Nothing filed |
-| Filing | Approval of the draft | Issues in Linear, team `TUD`, project Momentum |
+| Filing | Approval of the draft | Issues in Linear, team `MOM`, project Momentum |
 
 ## Rules
 

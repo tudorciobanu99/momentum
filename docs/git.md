@@ -11,7 +11,7 @@
 
 ## Branching
 
-Format: `type/id-slug`, for example `feat/tud-12-planner-node`
+Format: `type/id-slug`, for example `feat/mom-12-planner-node`
 
 - All work happens on a branch
 - Nothing is committed directly to `main` without the owner's approval
@@ -19,7 +19,7 @@ Format: `type/id-slug`, for example `feat/tud-12-planner-node`
 
 ## Commits
 
-Format: `type(surface): id summary`, for example `feat(frontend): tud-12 add planner node`
+Format: `type(surface): id summary`, for example `feat(frontend): mom-12 add planner node`
 
 | Surface | Covers |
 |---|---|
@@ -40,7 +40,7 @@ Body: [.github/pull_request_template.md](../.github/pull_request_template.md)
 
 | Section | Holds |
 |---|---|
-| Story | `Closes TUD-12` |
+| Story | `Closes MOM-12` |
 | Changes | What changed |
 | Acceptance criteria | Copied from the story, all ticked |
 | How to test | Steps to see it working |

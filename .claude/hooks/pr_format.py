@@ -12,8 +12,8 @@ import sys
 
 BASE = "main"
 TEMPLATE = ".github/pull_request_template.md"
-TITLE = re.compile(r"^(feat|fix|chore|docs)\([a-z][a-z-]*\): tud-\d+ \S.*$")
-PLACEHOLDERS = {"", "-", "- [ ]", "1.", "closes tud-"}
+TITLE = re.compile(r"^(feat|fix|chore|docs)\([a-z][a-z-]*\): mom-\d+ \S.*$")
+PLACEHOLDERS = {"", "-", "- [ ]", "1.", "closes mom-"}
 
 
 def deny(reasons: list[str]) -> None:
@@ -110,8 +110,8 @@ def main() -> None:
         elif is_empty(found[name]):
             reasons.append(f"section `## {name}` is empty")
 
-    if "Story" in found and not re.search(r"Closes TUD-\d+", found["Story"]):
-        reasons.append("`## Story` must contain `Closes TUD-<number>`")
+    if "Story" in found and not re.search(r"Closes MOM-\d+", found["Story"]):
+        reasons.append("`## Story` must contain `Closes MOM-<number>`")
 
     criteria = found.get("Acceptance criteria", "")
     if re.search(r"^\s*- \[ \]", criteria, re.M):
