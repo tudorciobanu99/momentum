@@ -38,7 +38,8 @@ def rerank_candidates(
     """Reorders candidates by relevance to the query.
 
     The documents sent are the stored chunk texts, which start with their heading path. Results
-    are ordered by rerank score, then chunk id.
+    are ordered by rerank score, then chunk id. All candidates are ranked, then chunks sharing an
+    article revision and heading path with a better-ranked chunk are dropped before truncating.
 
     Args:
         session: Open database session.
@@ -58,15 +59,17 @@ def rerank_candidates(
     n = settings.rerank_top_n if top_n is None else top_n
     if not candidates or n <= 0:
         return []
-    texts = {
-        chunk_id: text
-        for chunk_id, text in session.execute(
-            select(Chunk.id, Chunk.text).where(Chunk.id.in_([c.chunk_id for c in candidates]))
+    rows = {
+        row.id: row
+        for row in session.execute(
+            select(Chunk.id, Chunk.text, Chunk.article_id, Chunk.heading_path).where(
+                Chunk.id.in_([c.chunk_id for c in candidates])
+            )
         )
     }
-    documents = [texts[c.chunk_id] for c in candidates]
+    documents = [rows[c.chunk_id].text for c in candidates]
     try:
-        results = reranker.rerank(query, documents, min(n, len(documents)))
+        results = reranker.rerank(query, documents, len(documents))
     except (RateLimitError, RerankError):
         raise
     except Exception as e:
@@ -85,4 +88,11 @@ def rerank_candidates(
         for i, score in results
     ]
     ranked.sort(key=lambda r: (-r.rerank_score, r.chunk_id))
-    return ranked[:n]
+    seen: set[tuple[int, str]] = set()
+    unique: list[Ranked] = []
+    for r in ranked:
+        section = (rows[r.chunk_id].article_id, rows[r.chunk_id].heading_path)
+        if section not in seen:
+            seen.add(section)
+            unique.append(r)
+    return unique[:n]
