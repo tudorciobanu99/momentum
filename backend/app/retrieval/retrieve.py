@@ -18,38 +18,36 @@ from app.retrieval.models import (
     WikidataFormula,
 )
 from app.retrieval.rerank import rerank_candidates
+from app.retrieval.symbols import is_single_symbol
 
 _KIND_ORDER = {"direct": 0, "inherited": 1, "section": 2, "none": 3}
 
 
-def _link(
-    kind: str, citation: db.Citation, source: db.Source | None, revision: ArticleRevision
-) -> ProvenanceLink:
-    ref = (
-        SourceRef(
+def _source_ref(citation: db.Citation, source: db.Source | None) -> SourceRef | None:
+    if source is not None:
+        return SourceRef(
             title=source.title,
             authors=source.authors,
             year=source.year,
             doi=source.doi,
             isbn=source.isbn,
         )
-        if source
-        else None
-    )
+    title = citation.raw.get("title")
+    if isinstance(title, str) and title.strip():
+        return SourceRef(title=title.strip())
+    return None
+
+
+def _link(
+    kind: str, citation: db.Citation, source: db.Source | None, revision: ArticleRevision
+) -> ProvenanceLink:
     return ProvenanceLink.model_validate(
-        {"kind": kind, "source": ref, "page": citation.page, "revision": revision}
-    )
-
-
-def _source_ref(source: db.Source | None) -> SourceRef | None:
-    if source is None:
-        return None
-    return SourceRef(
-        title=source.title,
-        authors=source.authors,
-        year=source.year,
-        doi=source.doi,
-        isbn=source.isbn,
+        {
+            "kind": kind,
+            "source": _source_ref(citation, source),
+            "page": citation.page,
+            "revision": revision,
+        }
     )
 
 
@@ -69,8 +67,9 @@ def retrieve(
 
     Runs hybrid search and reranking, then loads everything in a constant number of queries.
     A formula without citations gets one `none` link, so its chain ends at the article revision.
-    Chunk citations are reported separately, without a kind. When several Wikidata records share
-    a QID, the one with the lowest id is attached.
+    Single-symbol formulas are left out. A citation without a source takes its title from the
+    stored raw data, if any. Chunk citations are reported separately, without a kind. When several
+    Wikidata records share a QID, the one with the lowest id is attached.
 
     Args:
         session: Open database session.
@@ -141,6 +140,8 @@ def retrieve(
 
     hits: dict[int, list[FormulaHit]] = defaultdict(list)
     for chunk_id, f in formula_rows:
+        if is_single_symbol(f.latex):
+            continue
         provenance = sorted(links.get(f.id, []), key=_sort_key)
         if not provenance:
             provenance = [ProvenanceLink(kind="none", revision=revisions[f.article_id])]
@@ -160,7 +161,7 @@ def retrieve(
     for chunk_id, citation, source in chunk_cites:
         cited[chunk_id].append(
             ChunkCitation(
-                source=_source_ref(source),
+                source=_source_ref(citation, source),
                 page=citation.page,
                 revision=revisions[citation.article_id],
             )
