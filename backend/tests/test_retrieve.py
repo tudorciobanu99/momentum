@@ -12,6 +12,7 @@ from app.retrieval.__main__ import main
 from app.retrieval.client import FakeClient, FakeReranker
 from app.retrieval.models import RetrievedChunk
 from app.retrieval.retrieve import retrieve
+from app.retrieval.symbols import is_single_symbol
 from app.settings import settings
 
 DIM = settings.embedding_dimension
@@ -57,12 +58,17 @@ def seed_chunk(session: Session, article: db.Article, index: int, text: str) -> 
 
 
 def seed_formula(
-    session: Session, article: db.Article, chunk: db.Chunk, index: int, qid: str | None = None
+    session: Session,
+    article: db.Article,
+    chunk: db.Chunk,
+    index: int,
+    qid: str | None = None,
+    latex: str | None = None,
 ) -> db.Formula:
     formula = db.Formula(
         article_id=article.id,
         index=index,
-        latex=f"x_{index}",
+        latex=latex or f"x_{index}",
         display=index % 2 == 0,
         section_path="Energy > S",
         position=index,
@@ -80,6 +86,7 @@ def seed_citation(
     key: str,
     title: str | None,
     page: str | None = None,
+    raw: dict[str, str] | None = None,
 ) -> db.Citation:
     source = (
         db.Source(title=title, authors="A. Author", year=1999, doi=f"10/{key}") if title else None
@@ -91,7 +98,7 @@ def seed_citation(
         article_id=article.id,
         ref_key=key,
         page=page,
-        raw={},
+        raw=raw or {},
         source_id=source.id if source else None,
     )
     session.add(citation)
@@ -300,3 +307,71 @@ def test_cli_retrieve_json(
     assert out["formulas"][0]["provenance"][0]["kind"] == "none"
     assert out["citations"][0]["source"]["title"] == "Book"
     assert "kind" not in out["citations"][0]
+
+
+@pytest.mark.parametrize("latex", ["m", "t", "{m}", " { {m} } ", "7", "\\omega", "{\\omega}"])
+def test_single_symbols(latex: str) -> None:
+    assert is_single_symbol(latex)
+
+
+@pytest.mark.parametrize(
+    "latex",
+    ["t_a", "x_2", "\\mathbf{M}", "{t_1, t_2, t_3}", "\\mathfrak{so}(3)", "ab", "{a}{b}", "", "{}"],
+)
+def test_not_single_symbols(latex: str) -> None:
+    assert not is_single_symbol(latex)
+
+
+def test_single_symbol_formula_hidden_but_stored(sessions: sessionmaker[Session]) -> None:
+    with sessions.begin() as session:
+        article = seed_article(session)
+        chunk = seed_chunk(session, article, 0, "energy")
+        seed_formula(session, article, chunk, 1, latex="{m}")
+        seed_formula(session, article, chunk, 2, latex="E = mc^2")
+    [result] = run(sessions)
+    assert [f.latex for f in result.formulas] == ["E = mc^2"]
+    with sessions() as session:
+        assert session.query(db.Formula).filter(db.Formula.latex == "{m}").count() == 1
+
+
+def test_no_source_citation_uses_raw_title(
+    sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with sessions.begin() as session:
+        article = seed_article(session)
+        chunk = seed_chunk(session, article, 0, "energy")
+        formula = seed_formula(session, article, chunk, 1)
+        c = seed_citation(session, article, "t", None, "3", raw={"title": " Raw Title "})
+        session.add(db.FormulaCitation(formula_id=formula.id, citation_id=c.id, kind="direct"))
+        session.add(db.ChunkCitation(chunk_id=chunk.id, citation_id=c.id))
+    [result] = run(sessions)
+    link = result.formulas[0].provenance[0]
+    assert link.source is not None
+    assert (link.source.title, link.source.doi, link.page) == ("Raw Title", None, "3")
+    assert result.citations[0].source is not None
+    assert result.citations[0].source.title == "Raw Title"
+    monkeypatch.setattr(settings, "voyage_api_key", "key")
+    monkeypatch.setattr("app.retrieval.__main__.SessionLocal", sessions)
+    monkeypatch.setattr(
+        "app.retrieval.__main__.VoyageClient", lambda *_: FakeClient(DIM, vector=lambda _: vec(1.0))
+    )
+    monkeypatch.setattr("app.retrieval.__main__.VoyageReranker", lambda *_: FakeReranker())
+    assert main(["retrieve", "energy"]) == 0
+    out = capsys.readouterr().out
+    assert "direct: Raw Title, p. 3" in out
+    assert "unknown source" not in out
+
+
+def test_no_source_citation_without_title_unchanged(sessions: sessionmaker[Session]) -> None:
+    with sessions.begin() as session:
+        article = seed_article(session)
+        chunk = seed_chunk(session, article, 0, "energy")
+        formula = seed_formula(session, article, chunk, 1)
+        c = seed_citation(session, article, "t", None, raw={"title": "  "})
+        session.add(db.FormulaCitation(formula_id=formula.id, citation_id=c.id, kind="direct"))
+        session.add(db.ChunkCitation(chunk_id=chunk.id, citation_id=c.id))
+    [result] = run(sessions)
+    assert result.formulas[0].provenance[0].source is None
+    assert result.citations[0].source is None

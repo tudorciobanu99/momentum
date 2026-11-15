@@ -45,7 +45,8 @@ class ProvenanceLink(BaseModel):
     Attributes:
         kind: How the citation attaches: `direct`, `inherited`, `section`, or `none` when nothing
             is cited and the chain ends at the revision.
-        source: The cited source, None for kind `none` or a citation without a resolved source.
+        source: The cited source, None for kind `none` or a citation with neither a source nor a
+            title; a citation without a source carries only its title.
         page: Page cited, if any.
         revision: Article revision that carries the citation.
     """
@@ -60,7 +61,8 @@ class ChunkCitation(BaseModel):
     """A source cited in a chunk's text, without a formula-level strength.
 
     Attributes:
-        source: The cited source, None if unresolved.
+        source: The cited source, None if unresolved and untitled; unresolved with a title carries
+            only the title.
         page: Page cited, if any.
         revision: Article revision that carries the citation.
     """
