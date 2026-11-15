@@ -28,37 +28,36 @@ class Ranked(BaseModel):
     lexical_rank: int | None = None
 
 
-def rerank_candidates(
+SectionKey = tuple[int, str]
+
+
+def rank_all(
     session: Session,
     reranker: Reranker,
     query: str,
     candidates: list[Candidate],
-    top_n: int | None = None,
-) -> list[Ranked]:
-    """Reorders candidates by relevance to the query.
+) -> tuple[list[Ranked], dict[int, SectionKey]]:
+    """Reranks every candidate with one reranker call, without dropping or truncating.
 
     The documents sent are the stored chunk texts, which start with their heading path. Results
-    are ordered by rerank score, then chunk id. All candidates are ranked, then chunks sharing an
-    article revision and heading path with a better-ranked chunk are dropped before truncating.
+    are ordered by rerank score, then chunk id.
 
     Args:
         session: Open database session.
         reranker: Reranking client, called once.
         query: Free-text question.
         candidates: Candidates from hybrid search.
-        top_n: Maximum results, defaulting to `settings.rerank_top_n`.
 
     Returns:
-        Up to `top_n` ranked candidates, best first. Empty, without calling the reranker, if there
-        are no candidates or `top_n` is not positive.
+        All ranked candidates, best first, and the `(article_id, heading_path)` section of each
+        chunk id. Both empty, without calling the reranker, if there are no candidates.
 
     Raises:
         RateLimitError: If the reranker is rate limiting.
         RerankError: If the reranker fails or returns an invalid result.
     """
-    n = settings.rerank_top_n if top_n is None else top_n
-    if not candidates or n <= 0:
-        return []
+    if not candidates:
+        return [], {}
     rows = {
         row.id: row
         for row in session.execute(
@@ -88,11 +87,60 @@ def rerank_candidates(
         for i, score in results
     ]
     ranked.sort(key=lambda r: (-r.rerank_score, r.chunk_id))
-    seen: set[tuple[int, str]] = set()
+    sections = {
+        r.chunk_id: (rows[r.chunk_id].article_id, rows[r.chunk_id].heading_path) for r in ranked
+    }
+    return ranked, sections
+
+
+def dedup_sections(ranked: list[Ranked], sections: dict[int, SectionKey]) -> list[Ranked]:
+    """Drops chunks sharing a section with a better-ranked chunk.
+
+    Args:
+        ranked: Ranked candidates, best first.
+        sections: `(article_id, heading_path)` of each chunk id.
+
+    Returns:
+        The first chunk of each section, in order.
+    """
+    seen: set[SectionKey] = set()
     unique: list[Ranked] = []
     for r in ranked:
-        section = (rows[r.chunk_id].article_id, rows[r.chunk_id].heading_path)
-        if section not in seen:
-            seen.add(section)
+        if sections[r.chunk_id] not in seen:
+            seen.add(sections[r.chunk_id])
             unique.append(r)
-    return unique[:n]
+    return unique
+
+
+def rerank_candidates(
+    session: Session,
+    reranker: Reranker,
+    query: str,
+    candidates: list[Candidate],
+    top_n: int | None = None,
+) -> list[Ranked]:
+    """Reorders candidates by relevance to the query.
+
+    All candidates are ranked, then chunks sharing an article revision and heading path with a
+    better-ranked chunk are dropped before truncating. See `rank_all` for the ordering.
+
+    Args:
+        session: Open database session.
+        reranker: Reranking client, called once.
+        query: Free-text question.
+        candidates: Candidates from hybrid search.
+        top_n: Maximum results, defaulting to `settings.rerank_top_n`.
+
+    Returns:
+        Up to `top_n` ranked candidates, best first. Empty, without calling the reranker, if there
+        are no candidates or `top_n` is not positive.
+
+    Raises:
+        RateLimitError: If the reranker is rate limiting.
+        RerankError: If the reranker fails or returns an invalid result.
+    """
+    n = settings.rerank_top_n if top_n is None else top_n
+    if not candidates or n <= 0:
+        return []
+    ranked, sections = rank_all(session, reranker, query, candidates)
+    return dedup_sections(ranked, sections)[:n]

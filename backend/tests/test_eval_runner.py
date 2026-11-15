@@ -33,7 +33,9 @@ from app.retrieval.eval_runner import (
     summarize,
 )
 from app.retrieval.evals import EvalQuestion, GoldFormula, GoldPassage
+from app.retrieval.hybrid import hybrid_search
 from app.retrieval.langsmith_results import DATASET_NAME, FakeResults
+from app.retrieval.rerank import dedup_sections, rank_all, rerank_candidates
 from app.settings import settings
 
 DIM = settings.embedding_dimension
@@ -417,6 +419,42 @@ def test_run_evals_compares_and_drops_schema(sessions: sessionmaker[Session], co
     assert run.uploaded is False
     assert run.reports["merged"].overall.questions == 2
     assert not schema_exists(sessions)
+
+
+def test_dedup_and_nodedup_from_one_rerank_call(
+    sessions: sessionmaker[Session], corpus: None
+) -> None:
+    questions = [question("q1", [ANCHOR_A]), question("q2", [ANCHOR_B], formulas=[1])]
+    client = FakeClient(DIM, vector=lambda _: vec(1.0, 0.0))
+    reranker = FakeReranker()
+    results = FakeResults()
+    run = run_evals(
+        sessions, client, reranker, questions, results, experiment="exp", compare_dedup=True
+    )
+    assert list(run.reports) == ["dedup", "nodedup"]
+    assert len(reranker.calls) == len(questions)
+    assert [e[1] for e in results.experiments] == ["exp-dedup", "exp-nodedup"]
+    assert all(e[0] == DATASET_NAME for e in results.experiments)
+    text_out = format_reports(run.reports)
+    assert "<- dedup" in text_out and "<- nodedup" in text_out
+    assert "topic" in text_out and "mechanics" in text_out and "concept" in text_out
+    dedup, nodedup = (e[2]["q1"]["chunk_ids"] for e in results.experiments)
+    assert len(nodedup) > len(dedup)
+
+    with sessions() as session:
+        candidates = hybrid_search(session, client, questions[0].question)
+        every, sections = rank_all(session, FakeReranker(), questions[0].question, candidates)
+        expected = rerank_candidates(session, FakeReranker(), questions[0].question, candidates, 10)
+    assert nodedup == [r.chunk_id for r in every[:10]]
+    assert dedup == [r.chunk_id for r in expected]
+    assert dedup == [r.chunk_id for r in dedup_sections(every, sections)[:10]]
+
+
+def test_compare_flags_are_exclusive(sessions: sessionmaker[Session]) -> None:
+    with pytest.raises(ValueError, match="cannot be combined"):
+        run_evals(sessions, FakeClient(DIM), FakeReranker(), [], None, True, compare_dedup=True)
+    with pytest.raises(SystemExit):
+        cli.main(["evals", "run", "--compare-merged", "--compare-dedup"])
 
 
 def test_merged_schema_dropped_on_error(sessions: sessionmaker[Session], corpus: None) -> None:

@@ -39,6 +39,7 @@ def _run_evals(
     compare_merged: bool,
     limit: int | None,
     upload: bool,
+    compare_dedup: bool = False,
 ) -> int:
     questions, problems = load_questions(path)
     if problems:
@@ -64,6 +65,7 @@ def _run_evals(
             results,
             compare_merged,
             settings.langsmith_project,
+            compare_dedup,
         )
     except RateLimitError as e:
         print(f"rate limited: {e}", file=sys.stderr)
@@ -191,10 +193,16 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--path", type=Path, default=EVALS_PATH)
     run = evals_sub.add_parser("run", help="measure retrieval quality on the dataset")
     run.add_argument("--path", type=Path, default=EVALS_PATH)
-    run.add_argument(
+    compare = run.add_mutually_exclusive_group()
+    compare.add_argument(
         "--compare-merged",
         action="store_true",
         help="also evaluate a chunking with short chunks merged, in a temporary schema",
+    )
+    compare.add_argument(
+        "--compare-dedup",
+        action="store_true",
+        help="evaluate with and without same-section deduplication from one rerank per question",
     )
     run.add_argument("--limit", type=int, default=None, help="run only the first N questions")
     run.add_argument("--no-upload", action="store_true", help="print results, skip LangSmith")
@@ -217,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             args.compare_merged,
             args.limit,
             not args.no_upload,
+            args.compare_dedup,
         )
     if args.command == "search":
         return _search(client, settings.voyage_api_key, args.query, args.rerank)
