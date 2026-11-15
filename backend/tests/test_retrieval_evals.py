@@ -27,7 +27,7 @@ def question(n: int, topic: str = "mechanics", formulas: bool = True, **override
         "id": f"q{n:03d}",
         "question": f"Question number {n}?",
         "topic": topic,
-        "gold_passages": [{"article": "Alpha", "rev_id": 100, "anchor": f"anchor {n}"}],
+        "gold_passages": [{"article": "Alpha", "rev_id": 100, "anchors": [f"anchor {n}"]}],
         "gold_formulas": [{"article": "Alpha", "rev_id": 100, "index": 0}] if formulas else [],
     }
     return data | overrides
@@ -87,15 +87,23 @@ def test_formula_share() -> None:
         ({"gold_passages": []}, "gold_passages"),
         ({"question": ""}, "question"),
         (
-            {"gold_passages": [{"article": "A", "rev_id": 1, "anchor": ""}]},
+            {"gold_passages": [{"article": "A", "rev_id": 1, "anchors": [""]}]},
             "anchor",
         ),
         (
-            {"gold_passages": [{"article": "A", "rev_id": 1, "anchor": "   "}]},
+            {"gold_passages": [{"article": "A", "rev_id": 1, "anchors": []}]},
+            "anchors",
+        ),
+        (
+            {"gold_passages": [{"article": "A", "rev_id": 1, "anchors": ["ok", "   "]}]},
             "anchor is blank",
         ),
         (
-            {"gold_passages": [{"article": "A", "rev_id": 1, "anchor": "x" * 301}]},
+            {"gold_passages": [{"article": "A", "rev_id": 1, "anchors": ["   "]}]},
+            "anchor is blank",
+        ),
+        (
+            {"gold_passages": [{"article": "A", "rev_id": 1, "anchors": ["x" * 301]}]},
             "anchor",
         ),
     ],
@@ -116,7 +124,7 @@ def test_malformed_json_is_reported() -> None:
 
 
 def test_anchor_at_limit_is_accepted() -> None:
-    gold = [{"article": "A", "rev_id": 1, "anchor": "x" * 300}]
+    gold = [{"article": "A", "rev_id": 1, "anchors": ["x" * 300]}]
     questions, problems = parse_questions(json.dumps(question(1, gold_passages=gold)))
     assert problems == []
     assert len(questions) == 1
@@ -136,15 +144,23 @@ def test_shared_run_ignores_stopwords_and_case() -> None:
 def test_question_copying_anchor_is_an_error() -> None:
     questions = dataset()
     questions[0].question = "Why is anchor 0 repeated here?"
-    questions[0].gold_passages[0].anchor = "one two three four five"
+    questions[0].gold_passages[0].anchors = ["one two three four five"]
+    questions[0].question = "Does two three four five hold?"
+    problems = check_schema(questions)
+    assert any("q000: question copies anchor wording" in p for p in problems)
+
+
+def test_question_copying_any_anchor_is_an_error() -> None:
+    questions = dataset()
+    questions[0].gold_passages[0].anchors = ["unrelated words here", "one two three four five"]
     questions[0].question = "Does two three four five hold?"
     problems = check_schema(questions)
     assert any("q000: question copies anchor wording" in p for p in problems)
 
 
 PASSAGES = [
-    GoldPassage(article="A", rev_id=1, anchor="the force is   proportional"),
-    GoldPassage(article="B", rev_id=2, anchor="Energy is conserved"),
+    GoldPassage(article="A", rev_id=1, anchors=["the force is   proportional"]),
+    GoldPassage(article="B", rev_id=2, anchors=["Energy is conserved"]),
 ]
 
 
@@ -211,33 +227,42 @@ def check(db: sessionmaker[Session], **overrides) -> list[str]:
 
 def test_database_check_accepts_known_gold(db: sessionmaker[Session]) -> None:
     passages = [
-        {"article": "Alpha", "rev_id": 100, "anchor": "Second law holds"},
-        {"article": "Alpha", "rev_id": 100, "anchor": "Only in the html text."},
+        {"article": "Alpha", "rev_id": 100, "anchors": ["Second law holds"]},
+        {"article": "Alpha", "rev_id": 100, "anchors": ["Only in the html text."]},
     ]
     assert check(db, gold_passages=passages) == []
+
+
+def test_database_check_verifies_every_anchor(db: sessionmaker[Session]) -> None:
+    passages = [
+        {"article": "Alpha", "rev_id": 100, "anchors": ["Second law holds", "missing anchor"]}
+    ]
+    problems = check(db, gold_passages=passages)
+    assert len(problems) == 1
+    assert "anchor not found" in problems[0] and "missing anchor" in problems[0]
 
 
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
         (
-            {"gold_passages": [{"article": "Alpha", "rev_id": 100, "anchor": "second law"}]},
+            {"gold_passages": [{"article": "Alpha", "rev_id": 100, "anchors": ["second law"]}]},
             "anchor not found",
         ),
         (
-            {"gold_passages": [{"article": "Alpha", "rev_id": 999, "anchor": "Second law"}]},
+            {"gold_passages": [{"article": "Alpha", "rev_id": 999, "anchors": ["Second law"]}]},
             "no article 'Alpha' at revision 999",
         ),
         (
             {
-                "gold_passages": [{"article": "Alpha", "rev_id": 100, "anchor": "Second law"}],
+                "gold_passages": [{"article": "Alpha", "rev_id": 100, "anchors": ["Second law"]}],
                 "gold_formulas": [{"article": "Alpha", "rev_id": 100, "index": 5}],
             },
             "no formula 5",
         ),
         (
             {
-                "gold_passages": [{"article": "Alpha", "rev_id": 100, "anchor": "Second law"}],
+                "gold_passages": [{"article": "Alpha", "rev_id": 100, "anchors": ["Second law"]}],
                 "gold_formulas": [{"article": "Gamma", "rev_id": 100, "index": 0}],
             },
             "no article 'Gamma'",
@@ -253,7 +278,7 @@ def test_database_check_reports_problems(
 
 
 def test_database_check_rejects_question_copying_heading(db: sessionmaker[Session]) -> None:
-    passages = [{"article": "Alpha", "rev_id": 100, "anchor": "Second law holds"}]
+    passages = [{"article": "Alpha", "rev_id": 100, "anchors": ["Second law holds"]}]
     with db.begin() as s:
         s.execute(
             update(Chunk).values(heading_path="Alpha > Rotating frames and fictitious forces")

@@ -2,12 +2,12 @@
 
 ```mermaid
 flowchart TD
-    A[python -m app.retrieval evals run] --> B[Load and check questions, --limit N]
+    A[python -m app.retrieval evals run] --> B[Load and check questions, --limit N; gold section = revision and heading path of stored chunks containing an anchor of the passage]
     B --> C[Per question: hybrid search, up to 30 fused candidates]
     C --> D[Rerank, top 10]
-    D --> E[Hit = chunk text contains a gold anchor]
+    D --> E[Hit = chunk text contains any anchor of a gold passage]
     E --> F[Recall@20 and passage recall on fused top 20]
-    E --> G[nDCG@10 and MRR on reranked top 10, binary relevance]
+    E --> G[nDCG@10 and MRR on reranked top 10: hit 1.0, chunk in a gold passage's section without an anchor 0.5, each passage credited once at its best position; strict variants count hits only]
     E --> H[Formula Hit@5: gold formula among formulas of reranked top 5, questions without gold formulas excluded]
     F --> I[Report: overall, per topic, per type, 10 worst questions]
     G --> I

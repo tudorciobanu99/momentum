@@ -23,6 +23,8 @@ from app.retrieval.corpus import (
 from app.retrieval.eval_runner import (
     QuestionOutcome,
     Retrieved,
+    _gold_sections,
+    _load,
     build_report,
     format_reports,
     question_type,
@@ -39,7 +41,7 @@ DIM = settings.embedding_dimension
 
 def question(
     qid: str,
-    anchors: list[str],
+    anchors: list[str | list[str]],
     formulas: list[int] | None = None,
     topic: str = "mechanics",
     note: str | None = "concept",
@@ -48,14 +50,17 @@ def question(
         id=qid,
         question=f"question {qid}",
         topic=topic,
-        gold_passages=[GoldPassage(article="A", rev_id=1, anchor=a) for a in anchors],
+        gold_passages=[
+            GoldPassage(article="A", rev_id=1, anchors=[a] if isinstance(a, str) else a)
+            for a in anchors
+        ],
         gold_formulas=[GoldFormula(article="A", rev_id=1, index=i) for i in formulas or []],
         note=note,
     )
 
 
 def chunk(n: int, body: str = "filler", formulas: tuple[int, ...] = ()) -> Retrieved:
-    return Retrieved(n, f"A > h{n}", body, frozenset(("A", 1, i) for i in formulas))
+    return Retrieved(n, f"A > h{n}", body, 1, frozenset(("A", 1, i) for i in formulas))
 
 
 def filler(count: int, start: int = 100) -> list[Retrieved]:
@@ -128,9 +133,82 @@ def test_formula_hit_is_undefined_without_gold_formulas() -> None:
 def test_ndcg_is_capped_at_one_and_ideal_uses_gold_count() -> None:
     q = question("q", ["a1", "b1"])
     ranked = [chunk(1, "a1 b1"), chunk(2, "a1")]
-    assert score_question(QuestionOutcome(q, ranked, ranked)).ndcg == pytest.approx(1.0)
+    both = score_question(QuestionOutcome(q, ranked, ranked))
+    assert both.ndcg_strict == pytest.approx(1.0)
+    assert both.ndcg == pytest.approx(1.0)
     one = score_question(QuestionOutcome(question("q", ["a1"]), ranked, ranked))
-    assert one.ndcg == 1.0
+    assert one.ndcg == 1.0 and one.ndcg_strict == 1.0
+
+
+SECTION = frozenset({(1, "A > h9")})
+
+
+def sectioned(
+    ranked: list[Retrieved], sections: list[frozenset[tuple[int, str]]] | None = None
+) -> QuestionOutcome:
+    q = question("q", [["alpha", "alt"], "beta"])
+    return QuestionOutcome(q, [], ranked, [frozenset(), SECTION] if sections is None else sections)
+
+
+def test_alternate_anchor_counts_as_hit() -> None:
+    s = score_question(sectioned([chunk(1, "xx alt xx")]))
+    assert s.hits == [True]
+    assert s.reciprocal_rank == s.reciprocal_rank_strict == 1.0
+    assert s.ndcg == s.ndcg_strict == pytest.approx(1 / (1 + 1 / math.log2(3)))
+
+
+def test_section_credit_in_ndcg_and_mrr_but_not_strict() -> None:
+    ranked = [chunk(9, "other"), chunk(2), chunk(1, "alt")]
+    s = score_question(sectioned(ranked))
+    ideal = 1 + 1 / math.log2(3)
+    assert s.ndcg == pytest.approx((0.5 + 1 / 2) / ideal)
+    assert s.ndcg == pytest.approx(0.6131, abs=1e-4)
+    assert s.reciprocal_rank == 0.5
+    assert s.ndcg_strict == pytest.approx(0.5 / ideal)
+    assert s.reciprocal_rank_strict == pytest.approx(1 / 3)
+    assert s.hits == [False, False, True]
+
+
+def test_passage_without_section_gets_no_partial_credit() -> None:
+    ranked = [chunk(9, "other")]
+    s = score_question(sectioned(ranked, [frozenset(), frozenset()]))
+    assert (s.ndcg, s.reciprocal_rank) == (0.0, 0.0)
+    assert score_question(sectioned(ranked, [])).ndcg == 0.0
+
+
+def test_passage_credited_once_at_best_position() -> None:
+    q = question("q", ["alpha", "beta"])
+    section = frozenset({(1, "A > h9"), (1, "A > h8")})
+    ranked = [chunk(9, "x"), chunk(8, "y"), chunk(1, "alpha beta")]
+    s = score_question(QuestionOutcome(q, [], ranked, [section, section]))
+    # alpha and beta both take 1.0 at rank 3, section credit is not added on top
+    assert s.ndcg == pytest.approx(2 / 2 / (1 + 1 / math.log2(3)))
+
+
+def test_credited_scores_never_below_strict() -> None:
+    q = question("q", ["alpha", "beta", "gamma"])
+    section = frozenset({(1, "A > h9")})
+    cases = [
+        [chunk(1, "alpha"), chunk(2, "alpha")],
+        [chunk(9, "x"), chunk(1, "alpha beta"), chunk(2, "alpha")],
+        [chunk(2, "gamma"), chunk(9, "x"), chunk(3, "beta")],
+        [chunk(9, "x")],
+    ]
+    for ranked in cases:
+        s = score_question(QuestionOutcome(q, [], ranked, [section, frozenset(), section]))
+        assert s.ndcg >= s.ndcg_strict - 1e-12
+        assert s.reciprocal_rank >= s.reciprocal_rank_strict
+
+
+def test_metrics_on_tiny_dataset_with_partial_credit() -> None:
+    a = sectioned([chunk(9, "other"), chunk(2), chunk(1, "alt")])
+    b = QuestionOutcome(question("q2", ["beta"]), [], [chunk(3, "beta")])
+    m = summarize([score_question(a), score_question(b)])
+    assert m.ndcg_at_10 == pytest.approx((0.6131 + 1) / 2, abs=1e-4)
+    assert m.ndcg_at_10_strict == pytest.approx((0.5 / (1 + 1 / math.log2(3)) + 1) / 2)
+    assert m.mrr == pytest.approx((0.5 + 1) / 2)
+    assert m.mrr_strict == pytest.approx((1 / 3 + 1) / 2)
+    assert {"ndcg@10_strict", "mrr_strict"} <= set(m.as_dict())
 
 
 def test_report_groups_and_worst_order() -> None:
@@ -164,6 +242,21 @@ def test_format_is_deterministic_and_side_by_side() -> None:
     text_out = format_reports(two)
     assert "<- baseline" in text_out and "<- merged" in text_out
     assert "worst questions (merged)" in text_out
+    assert "nDCG@10s" in text_out and "MRRs" in text_out
+
+
+def test_sections_are_derived_from_stored_chunks(
+    sessions: sessionmaker[Session], corpus: None
+) -> None:
+    q = question("q", [ANCHOR_A, [ANCHOR_B, "nowhere"], "absent"])
+    with sessions() as session:
+        assert _gold_sections(session, q) == [
+            frozenset({(1, "A > S")}),
+            frozenset({(1, "A > S")}),
+            frozenset(),
+        ]
+        loaded = _load(session, {c for (c,) in session.execute(select(Chunk.id))})
+    assert {c.rev_id for c in loaded.values()} == {1}
 
 
 def row(n: int, tokens: int, path: str = "A > S", article: int = 1) -> ChunkRow:
@@ -366,7 +459,16 @@ def test_results_reach_langsmith_fake(sessions: sessionmaker[Session], corpus: N
     assert set(outputs) == {"q1", "q2"}
     assert len(outputs["q1"]["chunk_ids"]) == len(outputs["q1"]["heading_paths"]) <= 10
     assert outputs["q1"]["hits"][0] in (True, False)
-    assert set(metrics) >= {"recall@20", "passage_recall@20", "ndcg@10", "mrr", "formula_hit@5"}
+    assert set(metrics) >= {
+        "recall@20",
+        "passage_recall@20",
+        "ndcg@10",
+        "ndcg@10_strict",
+        "mrr",
+        "mrr_strict",
+        "formula_hit@5",
+    }
+    assert {"ndcg@10_strict", "reciprocal_rank_strict"} <= set(outputs["q1"])
     assert metrics["recall@20"] == 1.0
 
 
