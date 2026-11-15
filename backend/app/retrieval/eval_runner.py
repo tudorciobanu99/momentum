@@ -3,7 +3,7 @@
 import math
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlalchemy import select
@@ -15,7 +15,7 @@ from app.retrieval.corpus import MERGED_SCHEMA, build_merged_corpus, corpus_sess
 from app.retrieval.evals import EvalQuestion, is_hit, normalise
 from app.retrieval.hybrid import hybrid_search
 from app.retrieval.langsmith_results import DATASET_NAME, ResultsClient
-from app.retrieval.rerank import rerank_candidates
+from app.retrieval.rerank import dedup_sections, rank_all
 
 RECALL_K = 20
 NDCG_K = 10
@@ -57,12 +57,15 @@ class QuestionOutcome:
         ranked: Reranked chunks, best first.
         gold_sections: Per gold passage, the `(rev_id, heading_path)` of the stored chunks that
             contain one of its anchors. Passages beyond the list have no section.
+        ranked_nodedup: Reranked chunks without dropping same-section duplicates, from the same
+            reranker call, None unless requested.
     """
 
     question: EvalQuestion
     fused: list[Retrieved]
     ranked: list[Retrieved]
     gold_sections: list[frozenset[SectionKey]] = field(default_factory=list)
+    ranked_nodedup: list[Retrieved] | None = None
 
 
 @dataclass(frozen=True)
@@ -395,14 +398,16 @@ def collect(
     client: EmbeddingClient,
     reranker: Reranker,
     questions: list[EvalQuestion],
+    keep_nodedup: bool = False,
 ) -> list[QuestionOutcome]:
-    """Runs hybrid search and reranking for every question.
+    """Runs hybrid search and reranking for every question, one reranker call each.
 
     Args:
         session: Session on the corpus to evaluate.
         client: Embedding client.
         reranker: Reranking client.
         questions: Questions to run.
+        keep_nodedup: Also keep the reranked top `NDCG_K` without section deduplication.
 
     Returns:
         One outcome per question, in order.
@@ -414,13 +419,21 @@ def collect(
     outcomes: list[QuestionOutcome] = []
     for q in questions:
         candidates = hybrid_search(session, client, q.question)
-        ranked = rerank_candidates(session, reranker, q.question, candidates, NDCG_K)
-        chunks = _load(session, {c.chunk_id for c in candidates} | {r.chunk_id for r in ranked})
+        every, sections = rank_all(session, reranker, q.question, candidates)
+        ranked = dedup_sections(every, sections)[:NDCG_K]
+        plain = every[:NDCG_K] if keep_nodedup else []
+        chunks = _load(
+            session,
+            {c.chunk_id for c in candidates}
+            | {r.chunk_id for r in ranked}
+            | {r.chunk_id for r in plain},
+        )
         outcomes.append(
             QuestionOutcome(
                 question=q,
                 fused=[chunks[c.chunk_id] for c in candidates],
                 ranked=[chunks[r.chunk_id] for r in ranked],
+                ranked_nodedup=[chunks[r.chunk_id] for r in plain] if keep_nodedup else None,
                 gold_sections=_gold_sections(session, q),
             )
         )
@@ -451,6 +464,34 @@ def evaluate_corpus(
     return [score_question(o) for o in outcomes]
 
 
+def evaluate_dedup(
+    sessions: sessionmaker[Session],
+    client: EmbeddingClient,
+    reranker: Reranker,
+    questions: list[EvalQuestion],
+) -> dict[str, list[QuestionScore]]:
+    """Scores every question with and without section deduplication from one reranker call each.
+
+    Args:
+        sessions: Session factory.
+        client: Embedding client.
+        reranker: Reranking client.
+        questions: Questions to run.
+
+    Returns:
+        Scores per question in order, under `dedup` and `nodedup`.
+    """
+    with corpus_session(sessions, None) as session:
+        outcomes = collect(session, client, reranker, questions, keep_nodedup=True)
+    return {
+        "dedup": [score_question(o) for o in outcomes],
+        "nodedup": [
+            score_question(replace(o, ranked=o.ranked_nodedup or [], ranked_nodedup=None))
+            for o in outcomes
+        ],
+    }
+
+
 @dataclass(frozen=True)
 class EvalRun:
     """Outcome of an evaluation run.
@@ -472,8 +513,12 @@ def run_evals(
     results: ResultsClient | None = None,
     compare_merged: bool = False,
     experiment: str = "momentum",
+    compare_dedup: bool = False,
 ) -> EvalRun:
-    """Evaluates retrieval, optionally against a merged-chunks variant, and uploads the results.
+    """Evaluates retrieval, optionally against a variant, and uploads the results.
+
+    `compare_dedup` evaluates `dedup` and `nodedup` from one reranker call per question instead of
+    `baseline`, and cannot be combined with `compare_merged`.
 
     The merged variant is built in a temporary schema that is dropped afterwards, also on error.
 
@@ -485,13 +530,21 @@ def run_evals(
         results: Where to upload the experiments, None to skip uploading.
         compare_merged: Also evaluate a chunking with short chunks merged.
         experiment: Experiment name prefix.
+        compare_dedup: Evaluate with and without same-section deduplication.
 
     Returns:
-        The reports, `baseline` first and `merged` second if requested.
+        The reports, `baseline` first and `merged` second if requested, or `dedup` and `nodedup`.
+
+    Raises:
+        ValueError: If both `compare_merged` and `compare_dedup` are set.
     """
-    variants: dict[str, list[QuestionScore]] = {
-        "baseline": evaluate_corpus(sessions, client, reranker, questions)
-    }
+    if compare_merged and compare_dedup:
+        raise ValueError("compare_merged and compare_dedup cannot be combined")
+    variants: dict[str, list[QuestionScore]]
+    if compare_dedup:
+        variants = evaluate_dedup(sessions, client, reranker, questions)
+    else:
+        variants = {"baseline": evaluate_corpus(sessions, client, reranker, questions)}
     if compare_merged:
         try:
             build_merged_corpus(sessions, client, MERGED_SCHEMA)
