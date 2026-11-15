@@ -3,6 +3,7 @@
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from selectolax.lexbor import LexborHTMLParser
@@ -90,17 +91,20 @@ class GoldPassage(BaseModel):
     Attributes:
         article: Article title.
         rev_id: Pinned revision of the article.
-        anchor: Short verbatim sentence or clause from the article text.
+        anchors: Short verbatim sentences or clauses from the article text, at least one. A
+            chunk containing any of them answers the question.
     """
 
     article: str = Field(min_length=1)
     rev_id: int
-    anchor: str = Field(min_length=1, max_length=MAX_ANCHOR_CHARS)
+    anchors: list[Annotated[str, Field(min_length=1, max_length=MAX_ANCHOR_CHARS)]] = Field(
+        min_length=1
+    )
 
-    @field_validator("anchor")
+    @field_validator("anchors")
     @classmethod
-    def _not_blank(cls, value: str) -> str:
-        if not value.strip():
+    def _not_blank(cls, value: list[str]) -> list[str]:
+        if any(not a.strip() for a in value):
             raise ValueError("anchor is blank")
         return value
 
@@ -185,7 +189,7 @@ def is_hit(chunk_text: str, gold_passages: list[GoldPassage]) -> bool:
         True if any anchor occurs in the chunk, ignoring whitespace differences.
     """
     text = normalise(chunk_text)
-    return any(normalise(p.anchor) in text for p in gold_passages)
+    return any(normalise(a) in text for p in gold_passages for a in p.anchors)
 
 
 def parse_questions(content: str) -> tuple[list[EvalQuestion], list[str]]:
@@ -231,9 +235,10 @@ def check_schema(questions: list[EvalQuestion]) -> list[str]:
             problems.append(f"duplicate {label}s: {duplicates}")
     for q in questions:
         for p in q.gold_passages:
-            run = shared_run(q.question, p.anchor)
-            if run:
-                problems.append(f"{q.id}: question copies anchor wording: {run!r}")
+            for anchor in p.anchors:
+                run = shared_run(q.question, anchor)
+                if run:
+                    problems.append(f"{q.id}: question copies anchor wording: {run!r}")
     per_topic = Counter(q.topic for q in questions)
     for topic in TOPICS:
         if per_topic[topic] < MIN_PER_TOPIC:
@@ -299,14 +304,15 @@ def check_database(session: Session, questions: list[EvalQuestion]) -> list[str]
             if article_id is None:
                 problems.append(f"{q.id}: no article {p.article!r} at revision {p.rev_id}")
                 continue
-            anchor = normalise(p.anchor)
             chunk_text, html_text = article_texts(article_id)
-            if anchor not in chunk_text and (html_text is None or anchor not in html_text):
-                problems.append(f"{q.id}: anchor not found in {p.article!r}: {p.anchor[:60]!r}")
-            for text, heading in headings[article_id]:
-                run = anchor in text and shared_run(q.question, heading)
-                if run:
-                    problems.append(f"{q.id}: question copies heading path: {run!r}")
+            for raw in p.anchors:
+                anchor = normalise(raw)
+                if anchor not in chunk_text and (html_text is None or anchor not in html_text):
+                    problems.append(f"{q.id}: anchor not found in {p.article!r}: {raw[:60]!r}")
+                for text, heading in headings[article_id]:
+                    run = anchor in text and shared_run(q.question, heading)
+                    if run:
+                        problems.append(f"{q.id}: question copies heading path: {run!r}")
         for f in q.gold_formulas:
             article_id = articles.get((f.article, f.rev_id))
             if article_id is None:
